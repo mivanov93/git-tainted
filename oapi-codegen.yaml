@@ -1,0 +1,10 @@
+package: oapi
+output: internal/api/oapi/server.gen.go
+generate:
+  models: true
+  std-http-server: true
+  strict-server: true
+  embedded-spec: true
+output-options:
+  skip-prune: false
+  skip-fmt: false

@@ -1,0 +1,473 @@
+openapi: 3.1.0
+info:
+  title: git-tainted API
+  version: 0.1.0
+  description: >
+    Tag-integrity ledger. Polls git remotes, detects tag rewrites, answers verify queries.
+    Loopback / no app auth; trusts an edge proxy.
+servers:
+  - url: http://127.0.0.1:8080
+    description: loopback (no app auth)
+components:
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        detail:
+          type: string
+    Remote:
+      type: object
+      required: [id, url, normalized_url, transport, sync_interval_ns, staleness_budget_ns,
+                 taint_any_tag_deletion, status, last_ok_ns, last_err, consecutive_failures,
+                 chain_len, created_at_ns, updated_at_ns]
+      properties:
+        id:                    { type: integer, format: int64 }
+        url:                   { type: string }
+        normalized_url:        { type: string }
+        transport:             { type: string, enum: [https, ssh] }
+        sync_interval_ns:      { type: integer, format: int64, description: "unix-nanoseconds" }
+        staleness_budget_ns:   { type: integer, format: int64, description: "unix-nanoseconds" }
+        taint_any_tag_deletion: { type: boolean }
+        hash_algo:             { type: string, enum: [sha1, sha256], nullable: true }
+        status:                { type: string, enum: [active, degraded, paused] }
+        last_ok_ns:            { type: integer, format: int64 }
+        last_err:              { type: string }
+        consecutive_failures:  { type: integer }
+        chain_len:             { type: integer, format: int64 }
+        removed_at_ns:         { type: integer, format: int64, nullable: true }
+        created_at_ns:         { type: integer, format: int64, description: "unix-nanoseconds" }
+        updated_at_ns:         { type: integer, format: int64, description: "unix-nanoseconds" }
+    CreateRemoteRequest:
+      type: object
+      required: [url, transport]
+      properties:
+        url:                   { type: string }
+        transport:             { type: string, enum: [https, ssh] }
+        sync_interval_ns:      { type: integer, format: int64 }
+        staleness_budget_ns:   { type: integer, format: int64 }
+        taint_any_tag_deletion: { type: boolean, default: true }
+    UpdateRemoteRequest:
+      type: object
+      properties:
+        sync_interval_ns:      { type: integer, format: int64 }
+        staleness_budget_ns:   { type: integer, format: int64 }
+        taint_any_tag_deletion: { type: boolean }
+        status:                { type: string, enum: [active, degraded, paused] }
+    RemoteList:
+      type: object
+      required: [items]
+      properties:
+        items:       { type: array, items: { $ref: '#/components/schemas/Remote' } }
+        next_cursor: { type: integer, format: int64 }
+    Tag:
+      type: object
+      required: [id, remote_id, tag_name, tainted, deleted, first_seen_ns, last_seen_ns,
+                 observation_count]
+      properties:
+        id:                    { type: integer, format: int64 }
+        remote_id:             { type: integer, format: int64 }
+        tag_name:              { type: string }
+        current_oid:           { type: string, nullable: true }
+        current_peeled_oid:    { type: string, nullable: true }
+        is_annotated:          { type: boolean }
+        first_oid:             { type: string, nullable: true }
+        first_seen_ns:         { type: integer, format: int64 }
+        last_seen_ns:          { type: integer, format: int64 }
+        last_changed_ns:       { type: integer, format: int64 }
+        deleted:               { type: boolean }
+        tainted:               { type: boolean }
+        taint_first_ns:        { type: integer, format: int64, nullable: true }
+        observation_count:     { type: integer, format: int64 }
+    TagList:
+      type: object
+      required: [items]
+      properties:
+        items:       { type: array, items: { $ref: '#/components/schemas/Tag' } }
+        next_cursor: { type: integer, format: int64 }
+    TaintEvent:
+      type: object
+      required: [id, remote_id, ref_id, reason, detected_at_ns]
+      properties:
+        id:            { type: integer, format: int64 }
+        remote_id:     { type: integer, format: int64 }
+        ref_id:        { type: integer, format: int64 }
+        reason:        { type: string, enum: [tag_oid_changed, tag_deleted_recreated] }
+        observation_id: { type: integer, format: int64, nullable: true }
+        from_oid:      { type: string, nullable: true }
+        to_oid:        { type: string, nullable: true }
+        detected_at_ns: { type: integer, format: int64 }
+        acked_at_ns:   { type: integer, format: int64, nullable: true }
+        acked_by:      { type: string, nullable: true }
+        ack_note:      { type: string, nullable: true }
+        detail:        { type: string }
+    TaintEventList:
+      type: object
+      required: [items]
+      properties:
+        items:       { type: array, items: { $ref: '#/components/schemas/TaintEvent' } }
+        next_cursor: { type: integer, format: int64 }
+    AckRequest:
+      type: object
+      required: [acked_by]
+      properties:
+        acked_by:  { type: string }
+        ack_note:  { type: string }
+    VerifyResponse:
+      type: object
+      required: [status, confidence, tag]
+      properties:
+        status:        { type: string, enum: [ok, tainted, mismatch, doesnt_exist, not_tracked] }
+        confidence:    { type: string, enum: [authoritative, stale] }
+        remote:
+          nullable: true
+          type: object
+          properties:
+            id:             { type: integer, format: int64 }
+            normalized_url: { type: string }
+        tag:           { type: string }
+        recorded:
+          nullable: true
+          type: object
+          properties:
+            ref_oid:          { type: string }
+            peeled_commit_oid: { type: string, nullable: true }
+            first_seen_ns:    { type: integer, format: int64 }
+            last_seen_ns:     { type: integer, format: int64 }
+        supplied_commit:  { type: string, nullable: true }
+        taint:
+          nullable: true
+          type: object
+          properties:
+            reason:             { type: string }
+            first_tainted_at_ns: { type: integer, format: int64 }
+            from_oid:           { type: string, nullable: true }
+            to_oid:             { type: string, nullable: true }
+        last_synced_ns: { type: integer, format: int64 }
+        sync_outcome:   { type: string, enum: [ok, failed, never] }
+        ledger_proof:
+          nullable: true
+          type: object
+          properties:
+            remote_id: { type: integer, format: int64 }
+            seq:       { type: integer, format: int64 }
+            row_hash:  { type: string }
+    SyncAuditList:
+      type: object
+      required: [items]
+      properties:
+        items:       { type: array, items: { $ref: '#/components/schemas/SyncEntry' } }
+        next_cursor: { type: integer, format: int64 }
+    SyncEntry:
+      type: object
+      required: [id, remote_id, trigger, started_ns, finished_ns, status, tags_seen, tags_changed]
+      properties:
+        id:              { type: integer, format: int64 }
+        remote_id:       { type: integer, format: int64 }
+        trigger:         { type: string, enum: [register, scheduled, manual] }
+        started_ns:      { type: integer, format: int64 }
+        finished_ns:     { type: integer, format: int64 }
+        status:          { type: string, enum: [ok, partial, failed] }
+        tags_seen:       { type: integer }
+        tags_changed:    { type: integer }
+        error:           { type: string }
+        chain_head_before: { type: string, nullable: true }
+        chain_head_after:  { type: string, nullable: true }
+paths:
+  /healthz:
+    get:
+      operationId: getHealthz
+      summary: Liveness probe.
+      responses:
+        "200":
+          description: service is live
+          content:
+            text/plain:
+              schema: { type: string, example: ok }
+  /v1/remotes:
+    get:
+      operationId: listRemotes
+      summary: List all remotes (paginated).
+      parameters:
+        - name: url
+          in: query
+          description: Resolve a normalized URL to its remote (exact match).
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100 }
+        - name: cursor
+          in: query
+          schema: { type: integer, format: int64, default: 0 }
+      responses:
+        "200":
+          description: remote list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RemoteList' }
+    post:
+      operationId: createRemote
+      summary: Register a new remote.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateRemoteRequest' }
+      responses:
+        "201":
+          description: created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Remote' }
+        "409":
+          description: duplicate normalized_url
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        "422":
+          description: invalid request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /v1/remotes/{remoteId}:
+    parameters:
+      - name: remoteId
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    get:
+      operationId: getRemote
+      summary: Get one remote by id.
+      responses:
+        "200":
+          description: remote
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Remote' }
+        "404":
+          description: not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    patch:
+      operationId: updateRemote
+      summary: Update remote settings.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateRemoteRequest' }
+      responses:
+        "200":
+          description: updated remote
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Remote' }
+        "404":
+          description: not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    delete:
+      operationId: deleteRemote
+      summary: Soft-delete a remote (retain ledger + taint history).
+      responses:
+        "204":
+          description: soft-deleted (removed_at_ns set)
+        "404":
+          description: not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /v1/remotes/{remoteId}/sync:
+    parameters:
+      - name: remoteId
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    post:
+      operationId: triggerSync
+      summary: Trigger an on-demand sync for a remote (202 Accepted).
+      responses:
+        "202":
+          description: sync queued
+        "404":
+          description: not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /v1/remotes/{remoteId}/syncs:
+    parameters:
+      - name: remoteId
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    get:
+      operationId: listSyncs
+      summary: List sync audit rows for a remote (paginated).
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100 }
+        - name: cursor
+          in: query
+          schema: { type: integer, format: int64, default: 0 }
+      responses:
+        "200":
+          description: sync list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SyncAuditList' }
+        "404":
+          description: not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /v1/remotes/{remoteId}/tags:
+    parameters:
+      - name: remoteId
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    get:
+      operationId: listTags
+      summary: List tag projections for a remote.
+      parameters:
+        - name: q
+          in: query
+          description: Glob pattern for tag name filter (default = all).
+          schema: { type: string }
+        - name: tainted
+          in: query
+          description: Filter by taint status.
+          schema: { type: string, enum: [any, only, never], default: any }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100 }
+        - name: cursor
+          in: query
+          schema: { type: integer, format: int64, default: 0 }
+      responses:
+        "200":
+          description: tag list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TagList' }
+        "404":
+          description: not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /v1/remotes/{remoteId}/tags/{tagName}:
+    parameters:
+      - name: remoteId
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+      - name: tagName
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getTag
+      summary: Get a single tag projection by name.
+      responses:
+        "200":
+          description: tag
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Tag' }
+        "404":
+          description: not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /v1/remotes/{remoteId}/taint-events:
+    parameters:
+      - name: remoteId
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    get:
+      operationId: listTaintEvents
+      summary: List taint events for a remote (paginated).
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100 }
+        - name: cursor
+          in: query
+          schema: { type: integer, format: int64, default: 0 }
+      responses:
+        "200":
+          description: taint event list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaintEventList' }
+        "404":
+          description: not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /v1/remotes/{remoteId}/taint-events/{eventId}/ack:
+    parameters:
+      - name: remoteId
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+      - name: eventId
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    post:
+      operationId: ackTaintEvent
+      summary: Annotate a taint event as acknowledged (append-only; does not clear taint).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AckRequest' }
+      responses:
+        "204":
+          description: acknowledged
+        "404":
+          description: not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        "409":
+          description: already acknowledged
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /v1/verify:
+    get:
+      operationId: verify
+      summary: Verify a tag on a remote against the ledger.
+      parameters:
+        - name: remote
+          in: query
+          description: Normalized URL or remote id.
+          required: true
+          schema: { type: string }
+        - name: tag
+          in: query
+          required: true
+          schema: { type: string }
+        - name: commit
+          in: query
+          description: Expected peeled commit oid (hex, 40 or 64 chars). Optional.
+          schema: { type: string }
+      responses:
+        "200":
+          description: verify result (always 200 for logical verdicts)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VerifyResponse' }
+        "422":
+          description: malformed input
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }

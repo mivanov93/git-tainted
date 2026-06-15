@@ -1,0 +1,24 @@
+# Build artifacts
+/bin/
+/dist/
+*.test
+/cover.out
+
+# Generated TypeScript client (Docker-built; not committed)
+/clients/
+
+# Local data / scratch
+/data/
+*.db
+*.sqlite
+*.sqlite-*
+/scratch/
+/.scratch/
+/tmp/
+
+# Env & secrets
+.env
+/credentials/
+
+# Editor
+.DS_Store

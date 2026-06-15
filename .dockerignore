@@ -1,0 +1,6 @@
+bin/
+cover.out
+clients/
+.git/
+*.db
+.env

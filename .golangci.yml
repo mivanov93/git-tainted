@@ -1,0 +1,20 @@
+version: "2"
+run:
+  timeout: 5m
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - ineffassign
+    - unused
+    - errorlint
+    - bodyclose
+    - gosec
+    - gocritic
+  exclusions:
+    rules:
+      # generated code is committed + reproducible (F.7); never lint it
+      - path: (internal/store/sqlc/|internal/api/oapi/)
+        linters: [errcheck, govet, staticcheck, ineffassign, unused, errorlint, bodyclose, gosec, gocritic]
