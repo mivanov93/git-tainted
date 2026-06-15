@@ -1,0 +1,16 @@
+services:
+  git-taintedd:
+    build: .
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - gt-data:/data
+    environment:
+      GT_DB_DRIVER: sqlite
+      GT_SQLITE_PATH: /data/git-tainted.db
+      GT_LISTEN_ADDR: 0.0.0.0:8080
+      GT_METRICS_ADDR: 0.0.0.0:9090
+    read_only: true
+volumes:
+  gt-data:

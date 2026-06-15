@@ -1,0 +1,35 @@
+Business Source License 1.1
+
+Licensor: Mihail Ivanov
+Software: git-tainted
+Change License: Apache License, Version 2.0
+Change Date: 2030-01-01
+
+1. License Grant
+The Licensor hereby grants you the right to copy, modify, create derivative works, redistribute, and non-commercially use the Software.
+
+2. Additional Use Grant
+You may use the Software for commercial production purposes, such as monitoring the integrity of git tags in your own repositories or organization, provided that your use does not violate the Additional Use Restriction listed below.
+
+3. Additional Use Restriction
+You may not use the Software to provide a commercial hosted tag-integrity, ref-monitoring, or supply-chain-attestation service to third parties without explicit approval from the licensor.
+
+4. Change to Open Source
+On the Change Date, or upon the occurrence of a Licensed Achievement specified by the Licensor,
+the Licensor hereby grants you a license to the Software under the Change License.
+From that day forward, the terms of this Business Source License shall no longer apply,
+and the Change License shall govern all use of the Software.
+
+5. Notice Requirement
+You must include a copy of this License, including the Licensor, Software, Change License, Change Date,
+and Additional Use Restriction details above, in all copies or substantial portions of the Software.
+You must not modify the software code to remove the copyright from the header.
+
+6. Intellectual Property
+The Licensor retains all intellectual property rights, title, and interest in and to the Software.
+
+7. Disclaimer of Warranty
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

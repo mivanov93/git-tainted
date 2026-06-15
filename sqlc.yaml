@@ -1,0 +1,17 @@
+version: "2"
+sql:
+  - engine: "sqlite"
+    schema: "db/migrations"
+    queries: "internal/store/sqlc/queries"
+    gen:
+      go:
+        package: "sqlc"
+        out: "internal/store/sqlc"
+        sql_package: "database/sql"
+        emit_interface: true
+        emit_json_tags: false
+        emit_empty_slices: true
+        overrides:
+          - db_type: "BLOB"
+            go_type:
+              type: "[]byte"
