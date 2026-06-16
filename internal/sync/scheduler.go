@@ -13,10 +13,17 @@ import (
 	"github.com/mivanov93/git-tainted/internal/model"
 )
 
-// Scheduler polls the Store for due remotes and drives RemoteSyncer.
+// remoteSyncer is the scheduler's view of the sync engine: drive a single
+// remote's sync to completion. *RemoteSyncer satisfies it; tests inject a fake
+// to observe that concurrency stays bounded — without spinning up real git.
+type remoteSyncer interface {
+	SyncRemote(ctx context.Context, remoteID model.RemoteID) (*SyncResult, error)
+}
+
+// Scheduler polls the Store for due remotes and drives the sync engine.
 type Scheduler struct {
 	store  syncStore
-	syncer *RemoteSyncer
+	syncer remoteSyncer
 	clk    model.Clock
 	log    *slog.Logger
 
@@ -27,7 +34,7 @@ type Scheduler struct {
 // NewScheduler constructs a Scheduler.
 // tickNS is the polling interval in nanoseconds; concurrency is the max
 // parallel SyncRemote calls in flight.
-func NewScheduler(store syncStore, syncer *RemoteSyncer, clk model.Clock, log *slog.Logger, tickNS int64, concurrency int) *Scheduler {
+func NewScheduler(store syncStore, syncer remoteSyncer, clk model.Clock, log *slog.Logger, tickNS int64, concurrency int) *Scheduler {
 	return &Scheduler{
 		store:       store,
 		syncer:      syncer,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -197,28 +198,71 @@ func TestScheduler_CancelDrainsInFlight(t *testing.T) {
 
 // TestScheduler_ConcurrencyBounded verifies that at most concurrency syncs run
 // simultaneously.
+// countingSyncer is a fake sync engine that records the maximum number of
+// SyncRemote calls in flight at once (and which remotes ran), so the test can
+// assert the scheduler's semaphore actually bounds concurrency. It holds each
+// call briefly so concurrent calls overlap observably, then marks the remote
+// freshly-synced (as the real syncer does) so the scheduler rotates to the
+// rest. It touches no git and no network.
+type countingSyncer struct {
+	store model.Store
+	clk   model.Clock
+
+	mu       sync.Mutex
+	inFlight int
+	maxSeen  int
+	ran      map[model.RemoteID]struct{}
+	hold     time.Duration
+}
+
+func (c *countingSyncer) SyncRemote(ctx context.Context, id model.RemoteID) (*tlsync.SyncResult, error) {
+	c.mu.Lock()
+	c.inFlight++
+	if c.inFlight > c.maxSeen {
+		c.maxSeen = c.inFlight
+	}
+	c.ran[id] = struct{}{}
+	c.mu.Unlock()
+
+	time.Sleep(c.hold) // brief overlap window so the cap is exercised, not luck
+
+	// Mark the remote freshly-synced so it stops being due and the scheduler
+	// moves on to the others (with the fixed test clock, each remote runs once).
+	_ = c.store.SetRemoteHealth(ctx, id, model.RemoteActive, "", c.clk.NowNS())
+
+	c.mu.Lock()
+	c.inFlight--
+	c.mu.Unlock()
+	return &tlsync.SyncResult{}, nil
+}
+
+func (c *countingSyncer) snapshot() (maxSeen, distinct int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.maxSeen, len(c.ran)
+}
+
+// TestScheduler_ConcurrencyBounded asserts the scheduler never runs more than
+// GT_SYNC_CONCURRENCY syncs at once, and still drains every due remote. It
+// injects a counting fake syncer (no real git, no fixed timeout), finishes in
+// ~tens of ms, and actually verifies the bound — the old version ran the real
+// scheduler for a hard 5-second deadline and only checked it didn't deadlock.
 func TestScheduler_ConcurrencyBounded(t *testing.T) {
 	ctx := context.Background()
-	syncer, s, clk := newTestSyncer(t)
+	s := testutil.NewTestStore(t)
+	clk := testutil.NewFakeClock(1_700_000_000_000_000_000)
 
-	srv := testutil.StartGitServer(t)
-	const base = 1_700_000_000_000_000_000
-
-	// Create 6 remotes but cap concurrency to 2.
 	const numRemotes = 6
 	const maxConcurrency = 2
 	for i := range numRemotes {
-		b := testutil.NewRepo(t, srv, "conc-repo-"+string(rune('a'+i))+".git", model.SHA1)
-		b.Commit("main", "c1", nil, base, base)
-		b.LightweightTag("v1.0", "c1")
-
+		url := "https://example.test/conc-" + string(rune('a'+i)) + ".git"
 		if _, err := s.CreateRemote(ctx, &model.Remote{
-			URL:                 srv.URL("conc-repo-" + string(rune('a'+i)) + ".git"),
-			NormalizedURL:       srv.URL("conc-repo-" + string(rune('a'+i)) + ".git"),
+			URL:                 url,
+			NormalizedURL:       url,
 			Transport:           model.TransportHTTPS,
 			Status:              model.RemoteActive,
 			TaintAnyTagDeletion: true,
-			SyncIntervalNS:      1,
+			SyncIntervalNS:      1, // always due, until the first sync marks it healthy
 			StalenessBudgetNS:   3600,
 			ChainHeadHash:       make([]byte, 32),
 			CreatedAtNS:         clk.NowNS(),
@@ -228,23 +272,48 @@ func TestScheduler_ConcurrencyBounded(t *testing.T) {
 		}
 	}
 
-	// Wrap syncer in a tracing RemoteSyncer — we can't easily inject but we can
-	// verify the semaphore prevents panic/deadlock. Run with concurrency=2 over
-	// 6 remotes and confirm the scheduler drains correctly.
-	_ = syncer
+	cs := &countingSyncer{
+		store: s,
+		clk:   clk,
+		ran:   make(map[model.RemoteID]struct{}),
+		hold:  5 * time.Millisecond,
+	}
+	const tickNS = 1_000_000 // 1ms — poll fast
+	sched := tlsync.NewScheduler(s, cs, clk, newLogger(), tickNS, maxConcurrency)
 
-	const tickNS = 10_000_000 // 10ms
-	sched := tlsync.NewScheduler(s, syncer, clk, newLogger(), tickNS, maxConcurrency)
-
-	schedCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
+	schedCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {
 		sched.Start(schedCtx)
 		close(done)
 	}()
+
+	// Stop the moment every remote has been synced once, bounded by a safety
+	// deadline so a regression can't hang the suite.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, distinct := cs.snapshot(); distinct >= numRemotes {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			<-done
+			_, distinct := cs.snapshot()
+			t.Fatalf("scheduler synced only %d/%d remotes before the 2s deadline", distinct, numRemotes)
+		}
+		time.Sleep(200 * time.Microsecond)
+	}
+	cancel()
 	<-done
-	// If we got here without deadlock or panic, concurrency is bounded (the
-	// semaphore prevents infinite goroutine spawning).
+
+	maxSeen, distinct := cs.snapshot()
+	if distinct != numRemotes {
+		t.Fatalf("synced %d distinct remotes, want %d", distinct, numRemotes)
+	}
+	if maxSeen > maxConcurrency {
+		t.Fatalf("max concurrent syncs = %d — exceeds the bound of %d", maxSeen, maxConcurrency)
+	}
+	if maxSeen != maxConcurrency {
+		t.Fatalf("max concurrent syncs = %d — expected the cap of %d to be reached (parallelism not exercised)", maxSeen, maxConcurrency)
+	}
 }
