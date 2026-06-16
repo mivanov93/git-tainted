@@ -18,6 +18,7 @@ var ErrConfig = errors.New("config: invalid configuration")
 type Config struct {
 	DBDriver              string
 	SQLitePath            string
+	MySQLDSN              string
 	ListenAddr            string
 	SyncConcurrency       int
 	SyncDefaultIntervalNS int64
@@ -70,6 +71,7 @@ func Load(get Lookup) (*Config, error) {
 	c := &Config{
 		DBDriver:          str("GT_DB_DRIVER", "sqlite"),
 		SQLitePath:        str("GT_SQLITE_PATH", ""),
+		MySQLDSN:          str("GT_MYSQL_DSN", ""),
 		ListenAddr:        str("GT_LISTEN_ADDR", "127.0.0.1:8080"),
 		GitBin:            str("GT_GIT_BIN", "git"),
 		ProtocolAllowlist: str("GT_PROTOCOL_ALLOWLIST", "https:ssh"),
@@ -102,11 +104,17 @@ func Load(get Lookup) (*Config, error) {
 }
 
 func (c *Config) validate() error {
-	if c.DBDriver != "sqlite" {
-		return fmt.Errorf("%w: GT_DB_DRIVER=%q unsupported (only sqlite in v1)", ErrConfig, c.DBDriver)
-	}
-	if c.SQLitePath == "" {
-		return fmt.Errorf("%w: GT_SQLITE_PATH is required for the sqlite driver", ErrConfig)
+	switch c.DBDriver {
+	case "sqlite":
+		if c.SQLitePath == "" {
+			return fmt.Errorf("%w: GT_SQLITE_PATH is required for the sqlite driver", ErrConfig)
+		}
+	case "mysql":
+		if c.MySQLDSN == "" {
+			return fmt.Errorf("%w: GT_MYSQL_DSN is required for the mysql driver", ErrConfig)
+		}
+	default:
+		return fmt.Errorf("%w: GT_DB_DRIVER=%q unsupported (want sqlite or mysql)", ErrConfig, c.DBDriver)
 	}
 	if c.SyncConcurrency <= 0 {
 		return fmt.Errorf("%w: GT_SYNC_CONCURRENCY=%d must be > 0", ErrConfig, c.SyncConcurrency)
