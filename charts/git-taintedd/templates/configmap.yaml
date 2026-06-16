@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "git-taintedd.fullname" . }}
+  labels:
+    {{- include "git-taintedd.labels" . | nindent 4 }}
+data:
+  # ---- Database -------------------------------------------------------------
+  GT_DB_DRIVER: {{ .Values.config.db.driver | quote }}
+  {{- if eq .Values.config.db.driver "sqlite" }}
+  GT_SQLITE_PATH: {{ .Values.config.sqlite.path | quote }}
+  {{- end }}
+  # ---- HTTP server ----------------------------------------------------------
+  GT_LISTEN_ADDR: {{ .Values.config.listenAddr | quote }}
+  # ---- Scheduler / sync -----------------------------------------------------
+  GT_SYNC_CONCURRENCY: {{ .Values.config.sync.concurrency | quote }}
+  GT_SYNC_DEFAULT_INTERVAL_NS: {{ .Values.config.sync.defaultIntervalNS | quote }}
+  GT_SCHEDULER_TICK_NS: {{ .Values.config.scheduler.tickNS | quote }}
+  GT_STALENESS_BUDGET_NS: {{ .Values.config.stalenessBudgetNS | quote }}
+  # ---- Git runner -----------------------------------------------------------
+  GT_GIT_BIN: {{ .Values.config.git.bin | quote }}
+  GT_GIT_TIMEOUT_NS: {{ .Values.config.git.timeoutNS | quote }}
+  GT_PROTOCOL_ALLOWLIST: {{ .Values.config.git.protocolAllowlist | quote }}
+  GT_HOST_ALLOWLIST: {{ .Values.config.git.hostAllowlist | quote }}
+  # ---- Observability --------------------------------------------------------
+  GT_LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  {{- if .Values.metrics.enabled }}
+  GT_METRICS_ADDR: {{ .Values.metrics.addr | quote }}
+  {{- end }}
+  GT_PPROF_ENABLED: {{ .Values.config.pprof.enabled | quote }}
+  # ---- Cache (verify hot path) ----------------------------------------------
+  GT_CACHE_ENABLED: {{ .Values.config.cache.enabled | quote }}
+  GT_CACHE_MAX_ENTRIES: {{ .Values.config.cache.maxEntries | quote }}
+  GT_CACHE_TTL_NS: {{ .Values.config.cache.ttlNS | quote }}
+  # ---- Auth (control endpoints only) ----------------------------------------
+  GT_AUTH_MODE: {{ .Values.auth.mode | quote }}
+  {{- if eq .Values.auth.mode "jwks" }}
+  GT_JWKS_URL: {{ .Values.auth.jwks.url | quote }}
+  GT_JWT_ISSUER: {{ .Values.auth.jwks.issuer | quote }}
+  GT_JWT_AUDIENCE: {{ .Values.auth.jwks.audience | quote }}
+  GT_JWT_ALGS: {{ .Values.auth.jwks.algs | quote }}
+  {{- end }}

@@ -1,0 +1,53 @@
+git-taintedd ({{ .Chart.AppVersion }}) is installed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Driver: {{ .Values.config.db.driver }}{{ if eq .Values.config.db.driver "sqlite" }} (single-writer; replicaCount pinned to 1){{ end }}
+Auth:   {{ .Values.auth.mode }}{{ if ne .Values.auth.mode "none" }}  (the five mutating control endpoints are gated){{ end }}
+Metrics:{{ if .Values.metrics.enabled }} enabled on :{{ .Values.metrics.port }}/metrics{{ else }} disabled (set metrics.enabled=true){{ end }}
+
+1. Port-forward the API service:
+
+   kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "git-taintedd.fullname" . }} 8080:{{ .Values.service.port }}
+
+2. Confirm readiness (DB-ping) and liveness:
+
+   curl -fsS http://127.0.0.1:8080/readyz   && echo "  <- ready"
+   curl -fsS http://127.0.0.1:8080/healthz  && echo "  <- live"
+
+{{- if .Values.metrics.enabled }}
+
+   # metrics (separate listener):
+   kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "git-taintedd.fullname" . }} {{ .Values.metrics.port }}:{{ .Values.metrics.port }}
+   curl -fsS http://127.0.0.1:{{ .Values.metrics.port }}/metrics | head
+{{- end }}
+
+3. Register a remote to track, with the admin CLI (git-tainted-ctl):
+{{ if eq .Values.auth.mode "none" }}
+   git-tainted-ctl --server http://127.0.0.1:8080 remote add https://github.com/org/repo.git
+   git-tainted-ctl --server http://127.0.0.1:8080 remote list
+{{- else if eq .Values.auth.mode "apikey" }}
+   # apikey mode — pass one of the keys you set in secrets.data.apiKeys:
+   git-tainted-ctl --server http://127.0.0.1:8080 --api-key "$GT_API_KEY" remote add https://github.com/org/repo.git
+{{- else if eq .Values.auth.mode "basic" }}
+   # basic mode — pass user:password matching secrets.data.basicAuth:
+   git-tainted-ctl --server http://127.0.0.1:8080 --basic "$GT_USER:$GT_PASS" remote add https://github.com/org/repo.git
+{{- else if eq .Values.auth.mode "jwks" }}
+   # jwks mode — pass a bearer JWT accepted by your IdP ({{ .Values.auth.jwks.issuer }}):
+   git-tainted-ctl --server http://127.0.0.1:8080 --token "$GT_TOKEN" remote add https://github.com/org/repo.git
+{{- end }}
+   (reads — verify, all GETs — and the health probes are never gated.)
+
+4. Verify the current tag of a checked-out repo against this server (verify CLI;
+   install the `git-tainted` binary on PATH so `git tainted` works as a subcommand):
+
+   cd /path/to/your/repo
+   git tainted --server http://127.0.0.1:8080
+   # exit 0 = ok, 3 = mismatch, 4 = tainted, 5 = doesn't exist, 6 = not tracked, 7 = no consensus
+
+{{- if eq .Values.config.db.driver "sqlite" }}
+
+NOTE: this release uses the sqlite driver — a single writer on a {{ .Values.persistence.size }} PVC.
+To run multiple replicas / enable autoscaling, switch to the mysql driver
+(config.db.driver=mysql) and provide secrets.data.mysqlDSN (or secrets.existingSecret).
+{{- end }}
+
+Run `helm test {{ .Release.Name }} --namespace {{ .Release.Namespace }}` to execute the in-cluster readiness check.

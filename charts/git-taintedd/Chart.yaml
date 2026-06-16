@@ -1,0 +1,33 @@
+apiVersion: v2
+name: git-taintedd
+description: >-
+  git-taintedd — the git-tainted server. Polls registered git remotes via
+  `git ls-remote --tags`, records each tag's oid in an append-only, per-remote,
+  SHA-256 hash-chained ledger, and serves the verify/admin API. Runs fully
+  without Redis; sqlite (single-writer) or mysql (multi-replica) backed.
+type: application
+# version  — the chart's own SemVer. CI's release.yml overrides this with the
+#            git tag (leading 'v' stripped) at `helm package` time.
+# appVersion — the default container image tag. CI overrides it with the git tag.
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.25.0-0"
+home: https://github.com/mivanov93/git-tainted
+sources:
+  - https://github.com/mivanov93/git-tainted
+keywords:
+  - git
+  - supply-chain
+  - security
+  - integrity
+  - tags
+  - ledger
+  - verification
+  - tamper-evident
+maintainers:
+  - name: Mihail Ivanov
+    url: https://github.com/mivanov93
+annotations:
+  # BUSL-1.1; Change License Apache-2.0 (see repo LICENSE). SPDX has no BUSL id,
+  # so this is a free-form annotation rather than a Chart.yaml `licenses` field.
+  licenses: BUSL-1.1
