@@ -1,17 +1,33 @@
-package store
+// Package mysql implements model.Store (the second backend) over sqlc-generated
+// queries against go-sql-driver/mysql (pure-Go, CGO-free). It mirrors the sqlite
+// backend's behavior exactly; the dialect-agnostic chain/migration logic lives
+// in the parent internal/store package (store.CanonicalRow, store.RowHash,
+// store.RunMigrationsMySQL). The schema lives in db/migrations-mysql, embedded
+// into the binary via the db package.
+package mysql
 
 import (
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
 	"strings"
+	"time"
 
-	"github.com/go-sql-driver/mysql"
+	driver "github.com/go-sql-driver/mysql"
 
 	"github.com/mivanov93/git-tainted/internal/model"
-	"github.com/mivanov93/git-tainted/internal/store/mysqlc"
+	"github.com/mivanov93/git-tainted/internal/store"
+	"github.com/mivanov93/git-tainted/internal/store/mysql/mysqlc"
 )
+
+// MySQLDriverName is the database/sql driver name registered by the blank import
+// of go-sql-driver/mysql (pure-Go, CGO-free).
+const MySQLDriverName = "mysql"
+
+// nowNS returns the current wall time as unix-nanoseconds.
+func nowNS() int64 { return time.Now().UnixNano() }
 
 // mysqlStore is the second model.Store implementation, over sqlc-generated
 // queries against go-sql-driver/mysql (pure-Go, CGO-free). It mirrors
@@ -25,13 +41,14 @@ import (
 //   - the canonical row encoding + RowHash come from chain.go unchanged
 //     (dialect-agnostic, SHA-256).
 type mysqlStore struct {
-	db      *sql.DB
-	q       *mysqlc.Queries
-	migrDir string
+	db         *sql.DB
+	q          *mysqlc.Queries
+	migrations fs.FS
 }
 
-// OpenMySQL opens a MySQL-backed Store at dsn, pings it, runs the MySQL
-// migrations in migrDir, and returns a ready store.
+// Open opens a MySQL-backed Store at dsn, pings it, applies the migrations from
+// the provided fs.FS (e.g. db.MySQLMigrations — embedded, so no db/ folder is
+// needed on disk), and returns a ready store.
 //
 // The DSN MUST set multiStatements=true (the migration files are multi-statement
 // scripts) and parseTime=false (all timestamps are BIGINT unix-ns, never
@@ -45,22 +62,22 @@ type mysqlStore struct {
 // Example DSN:
 //
 //	user:pass@tcp(127.0.0.1:3306)/git_tainted?multiStatements=true&parseTime=false&clientFoundRows=true
-func OpenMySQL(dsn, migrDir string) (model.Store, error) {
+func Open(dsn string, migrations fs.FS) (model.Store, error) {
 	if err := validateMySQLDSN(dsn); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open(MySQLDriverName, dsn)
+	sqlDB, err := sql.Open(MySQLDriverName, dsn)
 	if err != nil {
-		return nil, fmt.Errorf("store.OpenMySQL: %w", err)
+		return nil, fmt.Errorf("mysql.Open: %w", err)
 	}
-	if err := db.Ping(); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("store.OpenMySQL ping: %w", err)
+	if err := sqlDB.Ping(); err != nil {
+		_ = sqlDB.Close()
+		return nil, fmt.Errorf("mysql.Open ping: %w", err)
 	}
-	s := &mysqlStore{db: db, q: mysqlc.New(db), migrDir: migrDir}
+	s := &mysqlStore{db: sqlDB, q: mysqlc.New(sqlDB), migrations: migrations}
 	if err := s.Migrate(context.Background()); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("store.OpenMySQL migrate: %w", err)
+		_ = sqlDB.Close()
+		return nil, fmt.Errorf("mysql.Open migrate: %w", err)
 	}
 	return s, nil
 }
@@ -70,18 +87,18 @@ func OpenMySQL(dsn, migrDir string) (model.Store, error) {
 // (matched-rows semantics for UPDATE RowsAffected). It also rejects parseTime=true
 // (timestamps are BIGINT ns, not time.Time).
 func validateMySQLDSN(dsn string) error {
-	cfg, err := mysql.ParseDSN(dsn)
+	cfg, err := driver.ParseDSN(dsn)
 	if err != nil {
-		return fmt.Errorf("store.OpenMySQL: parse DSN: %w", err)
+		return fmt.Errorf("mysql.Open: parse DSN: %w", err)
 	}
 	if !cfg.MultiStatements {
-		return errors.New("store.OpenMySQL: DSN must set multiStatements=true (migrations are multi-statement scripts)")
+		return errors.New("mysql.Open: DSN must set multiStatements=true (migrations are multi-statement scripts)")
 	}
 	if !cfg.ClientFoundRows {
-		return errors.New("store.OpenMySQL: DSN must set clientFoundRows=true (UpdateRemote/lease CAS rely on matched-rows RowsAffected)")
+		return errors.New("mysql.Open: DSN must set clientFoundRows=true (UpdateRemote/lease CAS rely on matched-rows RowsAffected)")
 	}
 	if cfg.ParseTime {
-		return errors.New("store.OpenMySQL: DSN must set parseTime=false (timestamps are BIGINT unix-ns, not DATETIME)")
+		return errors.New("mysql.Open: DSN must set parseTime=false (timestamps are BIGINT unix-ns, not DATETIME)")
 	}
 	return nil
 }
@@ -90,7 +107,7 @@ func (s *mysqlStore) Ping(ctx context.Context) error { return s.db.PingContext(c
 func (s *mysqlStore) Close() error                   { return s.db.Close() }
 
 func (s *mysqlStore) Migrate(_ context.Context) error {
-	return runMigrationsMySQL(s.db, s.migrDir)
+	return store.RunMigrationsMySQL(s.db, s.migrations)
 }
 
 // ---- RemoteStore ------------------------------------------------------------
@@ -540,13 +557,37 @@ func isMySQLUniqueConflict(err error) bool {
 	if err == nil {
 		return false
 	}
-	var myErr *mysql.MySQLError
+	var myErr *driver.MySQLError
 	if errors.As(err, &myErr) {
 		return myErr.Number == 1062
 	}
 	// Fallback for wrapped/string errors.
 	return strings.Contains(err.Error(), "Error 1062") ||
 		strings.Contains(err.Error(), "Duplicate entry")
+}
+
+// hashAlgoPtr maps a *model.HashAlgo to a *string for the nullable hash_algo
+// column (nil → NULL).
+func hashAlgoPtr(a *model.HashAlgo) *string {
+	if a == nil {
+		return nil
+	}
+	s := string(*a)
+	return &s
+}
+
+// bytesEqual reports whether two byte slices are equal (used by the chain-head
+// CAS comparisons in ReleaseLeaseCAS).
+func bytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // Verify mysqlStore satisfies model.Store at compile time.

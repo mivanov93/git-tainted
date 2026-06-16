@@ -1,10 +1,10 @@
-package store
+package sqlite
 
 import (
 	"database/sql"
 	"testing"
 
-	"github.com/mivanov93/git-tainted/internal/store/sqlc"
+	"github.com/mivanov93/git-tainted/internal/store/sqlite/sqlc"
 )
 
 func TestSQLCGeneratedPackageCompiles(t *testing.T) {

@@ -7,37 +7,17 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/mivanov93/git-tainted/internal/model"
-	"github.com/mivanov93/git-tainted/internal/store"
 	"github.com/mivanov93/git-tainted/internal/testutil"
 )
 
 func newAPITestServer(tb testing.TB) (*httptest.Server, model.Store) {
 	tb.Helper()
-	root := findTestRepoRoot(tb)
-	f, err := os.CreateTemp("", "gt-api-test-*.db")
-	if err != nil {
-		tb.Fatal(err)
-	}
-	if err := f.Close(); err != nil {
-		tb.Fatal(err)
-	}
-	tb.Cleanup(func() { _ = os.Remove(f.Name()) })
-
-	s, err := store.Open(f.Name(), filepath.Join(root, "db", "migrations"))
-	if err != nil {
-		tb.Fatalf("store.Open: %v", err)
-	}
-	if err := s.Migrate(context.Background()); err != nil {
-		_ = s.Close()
-		tb.Fatalf("migrate: %v", err)
-	}
-	tb.Cleanup(func() { _ = s.Close() })
+	// testutil.NewTestStore opens an in-temp-file SQLite store and applies the
+	// embedded migrations (no db/ folder needed).
+	s := testutil.NewTestStore(tb)
 
 	clk := &fixedClock{ns: 1_718_000_000_000_000_000}
 	srv := httptest.NewServer(NewServer(s, clk, nil))
@@ -48,25 +28,6 @@ func newAPITestServer(tb testing.TB) (*httptest.Server, model.Store) {
 type fixedClock struct{ ns int64 }
 
 func (c *fixedClock) NowNS() int64 { return c.ns }
-
-func findTestRepoRoot(tb testing.TB) string {
-	tb.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		tb.Fatal("runtime.Caller failed")
-	}
-	dir := filepath.Dir(file)
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			tb.Fatal("go.mod not found")
-		}
-		dir = parent
-	}
-}
 
 func itoa(n int64) string { return fmt.Sprintf("%d", n) }
 

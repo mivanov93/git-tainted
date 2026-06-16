@@ -1,11 +1,12 @@
-package store
+package mysql
 
 import (
 	"context"
 	"fmt"
 
 	"github.com/mivanov93/git-tainted/internal/model"
-	"github.com/mivanov93/git-tainted/internal/store/mysqlc"
+	"github.com/mivanov93/git-tainted/internal/store"
+	"github.com/mivanov93/git-tainted/internal/store/mysql/mysqlc"
 )
 
 // mysqlTx implements model.Tx inside a single MySQL write transaction. It
@@ -54,14 +55,14 @@ func (t *mysqlTx) AppendObservation(ctx context.Context, o *model.Observation) (
 		return 0, fmt.Errorf("get chain head: %w", err)
 	}
 	prevHash := headRow.ChainHeadHash
-	if len(prevHash) != chainHashLen {
+	if len(prevHash) != store.ChainHashLen {
 		return 0, fmt.Errorf("remote %d chain_head malformed (len %d)", o.RemoteID, len(prevHash))
 	}
 	seq := model.Seq(headRow.ChainLen + 1)
 
 	o.Seq = seq
 	o.PrevHash = prevHash
-	o.RowHash = RowHash(prevHash, o) // chain.go — dialect-agnostic
+	o.RowHash = store.RowHash(prevHash, o) // parent store — dialect-agnostic
 
 	id, err := t.q.InsertObservation(ctx, mysqlc.InsertObservationParams{
 		RemoteID:      int64(o.RemoteID),

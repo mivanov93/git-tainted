@@ -13,12 +13,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mivanov93/git-tainted/db"
 	"github.com/mivanov93/git-tainted/internal/api"
 	"github.com/mivanov93/git-tainted/internal/config"
 	"github.com/mivanov93/git-tainted/internal/git"
 	"github.com/mivanov93/git-tainted/internal/lock"
 	"github.com/mivanov93/git-tainted/internal/model"
-	"github.com/mivanov93/git-tainted/internal/store"
+	"github.com/mivanov93/git-tainted/internal/store/mysql"
+	"github.com/mivanov93/git-tainted/internal/store/sqlite"
 	tlsync "github.com/mivanov93/git-tainted/internal/sync"
 )
 
@@ -45,39 +47,28 @@ func run() error {
 
 	// ---- Store ----------------------------------------------------------------
 	// Two model.Store implementations behind one seam (owner's two-impls pattern):
-	// sqlite (default) and mysql. Each has its own migrations dir + migrate path.
+	// sqlite (default) and mysql, each in its own subpackage. Migrations are
+	// embedded in the binary (the db package) and applied by Open — the server
+	// runs with no db/ folder on disk.
 	var st model.Store
 	switch cfg.DBDriver {
 	case "mysql":
-		migrDir, derr := findMigrationsDirNamed("db/migrations-mysql")
-		if derr != nil {
-			log.Error("cannot locate mysql migrations dir", "err", derr)
-			return derr
-		}
-		// OpenMySQL pings, runs the MySQL migrations, and returns a ready store.
-		st, err = store.OpenMySQL(cfg.MySQLDSN, migrDir)
+		// mysql.Open pings, runs the embedded MySQL migrations, returns a ready store.
+		st, err = mysql.Open(cfg.MySQLDSN, db.MySQLMigrations)
 		if err != nil {
-			log.Error("store.OpenMySQL failed", "err", err)
+			log.Error("mysql.Open failed", "err", err)
 			return err
 		}
 		defer func() { _ = st.Close() }()
 		log.Info("store ready", "driver", "mysql")
 	default: // "sqlite" (validated in config)
-		migrDir, derr := findMigrationsDirNamed("db/migrations")
-		if derr != nil {
-			log.Error("cannot locate migrations dir", "err", derr)
-			return derr
-		}
-		st, err = store.Open(cfg.SQLitePath, migrDir)
+		// sqlite.Open pings, applies the embedded SQLite migrations, returns a ready store.
+		st, err = sqlite.Open(cfg.SQLitePath, db.SQLiteMigrations)
 		if err != nil {
-			log.Error("store.Open failed", "path", cfg.SQLitePath, "err", err)
+			log.Error("sqlite.Open failed", "path", cfg.SQLitePath, "err", err)
 			return err
 		}
 		defer func() { _ = st.Close() }()
-		if err := st.Migrate(context.Background()); err != nil {
-			log.Error("migration failed", "err", err)
-			return err
-		}
 		log.Info("store ready", "driver", "sqlite", "path", cfg.SQLitePath)
 	}
 
@@ -177,36 +168,6 @@ func run() error {
 		}
 		return err
 	}
-}
-
-// findMigrationsDirNamed locates a migrations directory (e.g. "db/migrations"
-// or "db/migrations-mysql") relative to the binary's executable path, falling
-// back to a path relative to the current directory. In production the binary is
-// shipped alongside the db/ tree; in test/dev the current-directory fallback
-// covers `go run ./cmd/git-taintedd`. GT_MIGRATIONS_DIR overrides the path for
-// the active driver (useful in containers).
-func findMigrationsDirNamed(name string) (string, error) {
-	// Prefer an env override (useful in containers where the binary is at /usr/bin
-	// but migrations live at a different absolute path).
-	if v := os.Getenv("GT_MIGRATIONS_DIR"); v != "" {
-		return v, nil
-	}
-
-	// Try relative to the current working directory (go run / dev).
-	if _, err := os.Stat(name); err == nil {
-		return name, nil
-	}
-
-	// Try relative to the executable (production / `make build`).
-	if exe, err := os.Executable(); err == nil {
-		// executable is typically bin/git-taintedd; db/ is at project root.
-		candidate := exe + "/../../" + name
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate, nil
-		}
-	}
-
-	return "", fmt.Errorf("cannot locate %s: set GT_MIGRATIONS_DIR env var", name)
 }
 
 // Ensure model.Clock is satisfied by wallClock at compile time.
