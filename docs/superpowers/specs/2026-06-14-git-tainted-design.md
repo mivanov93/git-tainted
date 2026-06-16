@@ -35,7 +35,7 @@ It never checks out or downloads repository contents. The **only** git operation
 - Signatures / signature verification (removed).
 - Multi-remote mirror grouping / cross-remote divergence (removed — Remote is standalone).
 - Downloading trees, blobs, or commit objects — ever (we never fetch objects at all now).
-- App-level authentication (binds loopback; trusts an edge proxy).
+- Authentication on **reads** / RBAC / per-key scopes (out of scope). App-level auth on the *mutating control* endpoints is now **opt-in** — default `none` (loopback + edge-proxy trust, unchanged); optional `apikey`/`basic`/`jwks` per the [2026-06-16 control-plane spec](2026-06-16-git-tainted-control-plane-design.md).
 
 ## 3. Threat model & honest guarantees
 
@@ -70,14 +70,15 @@ Four entities + one append-only spine.
 | Language / git | **Go 1.26.4**, shelling out to the system `git` binary. **Only** `git ls-remote --tags` — no object fetch, no tmpfs, no `objectstore`. |
 | Hardening (§ below) | exec argv (never a shell); strict URL validation (https + ssh only); `GIT_TERMINAL_PROMPT=0`, `GIT_CONFIG_NOSYSTEM=1`, `GIT_ALLOW_PROTOCOL=https:ssh`, `--no-replace-objects -c core.useReplaceRefs=false`, hooks off, sha1dc on, per-call timeout + ctx-kill. (Object-size caps etc. are moot — we never fetch objects.) |
 | Persistence | `Store` adapter; **SQLite (`modernc.org/sqlite`, pure-Go)** first. All timestamps BIGINT unix-ns. |
+| Cache | Optional **Otter** caching `Store` decorator on the verify hot path; per-remote **generation** invalidation, bump-after-commit; default-on, TTL-backstopped, fully disableable. See [2026-06-16 spec](2026-06-16-git-tainted-control-plane-design.md). |
 | Ledger | Append-only, per-remote, **SHA-256 hash-chained** observations; audit/verify endpoint. |
 | Taint | `tag_oid_changed`, `tag_deleted_recreated`; sticky; ack-only (no clear). |
 | Verify hash | Compare the **peeled commit oid** (the commit a checkout lands on). Annotated re-pointing still flagged via recorded tag-ref-oid history. |
 | CLI on untracked remote | Return **`not_tracked`**; CLI exits non-zero with a register hint. CLI never makes the server fetch arbitrary URLs. |
 | Sync | Scheduler (per-remote interval, jittered) + on-demand `POST /v1/remotes/{id}/sync`; per-remote `Lock` lease. |
-| Auth | **None** (binds loopback; trusts an edge proxy). |
+| Auth | Default **None** (loopback + edge-proxy trust); **optional** `apikey`/`basic`/`jwks` gating the five mutating control endpoints (`internal/auth` seam). Reads never gated. See [2026-06-16 spec](2026-06-16-git-tainted-control-plane-design.md). |
 | Search | Glob default + optional RE2 regex. |
-| Binaries | `cmd/git-taintedd` (server) + `cmd/git-tainted` (CLI — named so `git tainted` works as a git subcommand). Two binaries so the CLI stays lean (no SQLite/server deps). |
+| Binaries | `cmd/git-taintedd` (server) + `cmd/git-tainted` (verify CLI — named so `git tainted` works as a git subcommand) + `cmd/git-tainted-ctl` (admin/control CLI). Both CLIs stay lean (no SQLite/server deps). |
 
 ## 6. Sync engine
 
