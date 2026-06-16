@@ -3,7 +3,7 @@ PKG        := ./...
 DOCKER     := docker
 
 .PHONY: tidy generate sqlc oapi-server lint vet test race cover test-mysql \
-        build build-server build-cli docker up-local down e2e smoke verify-spec clean
+        build build-server build-cli build-ctl docker up-local down e2e smoke verify-spec clean
 
 tidy:            ; $(GO) mod tidy
 generate: sqlc oapi-server   ## all codegen
@@ -26,9 +26,10 @@ cover:           ; $(GO) test -coverprofile=cover.out $(PKG) && $(GO) tool cover
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/mivanov93/git-tainted/internal/buildinfo.Version=$(VERSION)
 
-build: build-server build-cli   ## build both binaries (version stamped from git describe)
+build: build-server build-cli build-ctl   ## build all binaries (version stamped from git describe)
 build-server:    ; CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/git-taintedd ./cmd/git-taintedd
 build-cli:       ; CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/git-tainted ./cmd/git-tainted
+build-ctl:       ; CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/git-tainted-ctl ./cmd/git-tainted-ctl
 
 docker:          ; $(DOCKER) build -t git-tainted:dev .
 up-local:        ; $(DOCKER) compose -f docker-compose.local.yml up --build -d
