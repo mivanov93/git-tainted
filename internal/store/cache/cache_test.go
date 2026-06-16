@@ -21,17 +21,17 @@ type fakeStore struct {
 	mu sync.Mutex
 
 	// per-method call counters (atomic so the race test can read them safely).
-	getRemoteN    atomic.Int64
-	getByURLN     atomic.Int64
-	getRefN       atomic.Int64
-	listTagsN     atomic.Int64
-	lobsN         atomic.Int64
-	withTxN       atomic.Int64
-	createN       atomic.Int64
-	updateN       atomic.Int64
-	softDeleteN   atomic.Int64
-	setHealthN    atomic.Int64
-	setRefTaintN  atomic.Int64
+	getRemoteN   atomic.Int64
+	getByURLN    atomic.Int64
+	getRefN      atomic.Int64
+	listTagsN    atomic.Int64
+	lobsN        atomic.Int64
+	withTxN      atomic.Int64
+	createN      atomic.Int64
+	updateN      atomic.Int64
+	softDeleteN  atomic.Int64
+	setHealthN   atomic.Int64
+	setRefTaintN atomic.Int64
 
 	// backing state (guarded by mu).
 	remotes map[model.RemoteID]*model.Remote
@@ -278,7 +278,9 @@ func (f *fakeStore) GetChainHead(context.Context, model.RemoteID) ([]byte, int64
 func (f *fakeStore) ReplayObservations(context.Context, model.RemoteID, model.Seq, int) ([]model.Observation, error) {
 	return nil, nil
 }
-func (f *fakeStore) AppendTaintEvent(context.Context, *model.TaintEvent) (int64, error) { return 0, nil }
+func (f *fakeStore) AppendTaintEvent(context.Context, *model.TaintEvent) (int64, error) {
+	return 0, nil
+}
 func (f *fakeStore) ListTaintEvents(context.Context, model.RemoteID, int, int64) ([]model.TaintEvent, int64, error) {
 	return nil, 0, nil
 }
@@ -751,4 +753,129 @@ func mustLOBS(t *testing.T, c model.Store, refID model.RefID) {
 	if _, err := c.LatestObservationForRef(context.Background(), refID); err != nil {
 		t.Fatalf("LatestObservationForRef(%d): %v", refID, err)
 	}
+}
+
+// TestReturnedObjectsAreIsolatedFromCache pins the value-isolation contract: the
+// bare store hands out a freshly-scanned object every read, so callers may mutate
+// what they receive — the UpdateRemote handler reads a Remote and sets fields
+// before writing it back; the sync writer flips Deleted/LastSeen on a ListTags
+// element before UpsertRefProjection. The cache must return copies so those
+// in-place mutations never corrupt the cached entry (and never race a concurrent
+// verifier reading the same pointer). Without per-read copies each sub-test below
+// fails: the mutation made to the first result reappears on the cache hit.
+func TestReturnedObjectsAreIsolatedFromCache(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("GetRemote", func(t *testing.T) {
+		f := newFakeStore()
+		f.seed(1, "https://x/r.git", 10, "v1")
+		c := Wrap(f, enabledCfg())
+
+		r1, err := c.GetRemote(ctx, 1) // miss → fills cache
+		if err != nil {
+			t.Fatal(err)
+		}
+		r1.Status = model.RemotePaused // caller mutates what it received
+		r1.SyncIntervalNS = 999
+
+		r2, err := c.GetRemote(ctx, 1) // hit → must be a pristine copy
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r2.Status == model.RemotePaused || r2.SyncIntervalNS == 999 {
+			t.Fatalf("caller mutation leaked into the cache: Status=%q interval=%d", r2.Status, r2.SyncIntervalNS)
+		}
+		if n := f.getRemoteN.Load(); n != 1 {
+			t.Fatalf("want 1 inner GetRemote (2nd served from cache), got %d", n)
+		}
+	})
+
+	t.Run("GetRemoteByURL", func(t *testing.T) {
+		f := newFakeStore()
+		f.seed(1, "https://x/r.git", 10, "v1")
+		c := Wrap(f, enabledCfg())
+
+		r1, err := c.GetRemoteByURL(ctx, "https://x/r.git")
+		if err != nil {
+			t.Fatal(err)
+		}
+		r1.Status = model.RemotePaused
+
+		r2, err := c.GetRemoteByURL(ctx, "https://x/r.git")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r2.Status == model.RemotePaused {
+			t.Fatalf("caller mutation leaked into the URL-resolved cache: Status=%q", r2.Status)
+		}
+	})
+
+	t.Run("GetRef", func(t *testing.T) {
+		f := newFakeStore()
+		f.seed(1, "https://x/r.git", 10, "v1")
+		c := Wrap(f, enabledCfg())
+
+		ref1, err := c.GetRef(ctx, 1, "v1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ref1.Deleted = true
+		ref1.Tainted = true
+
+		ref2, err := c.GetRef(ctx, 1, "v1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ref2.Deleted || ref2.Tainted {
+			t.Fatalf("caller mutation leaked into the Ref cache: Deleted=%v Tainted=%v", ref2.Deleted, ref2.Tainted)
+		}
+	})
+
+	t.Run("ListTags", func(t *testing.T) {
+		f := newFakeStore()
+		f.seed(1, "https://x/r.git", 10, "v1")
+		c := Wrap(f, enabledCfg())
+
+		l1, err := c.ListTags(ctx, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(l1) == 0 {
+			t.Fatal("want >=1 tag")
+		}
+		l1[0].Deleted = true // mirrors the sync writer mutating prev.Deleted in place
+		l1[0].LastSeenNS = 12345
+
+		l2, err := c.ListTags(ctx, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if l2[0].Deleted || l2[0].LastSeenNS == 12345 {
+			t.Fatalf("caller mutation leaked into the ListTags cache: Deleted=%v LastSeen=%d", l2[0].Deleted, l2[0].LastSeenNS)
+		}
+	})
+
+	t.Run("LatestObservationForRef", func(t *testing.T) {
+		f := newFakeStore()
+		f.seed(1, "https://x/r.git", 10, "v1")
+		c := Wrap(f, enabledCfg())
+
+		// Warm the refID->remoteID index so LOBS caches (its cold path is uncached).
+		if _, err := c.GetRef(ctx, 1, "v1"); err != nil {
+			t.Fatal(err)
+		}
+		p1, err := c.LatestObservationForRef(ctx, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p1.Seq = 777
+
+		p2, err := c.LatestObservationForRef(ctx, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p2.Seq == 777 {
+			t.Fatalf("caller mutation leaked into the LOBS cache: Seq=%d", p2.Seq)
+		}
+	})
 }
