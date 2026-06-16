@@ -1,19 +1,18 @@
-package store
+package sqlite
 
 import (
 	"context"
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"testing"
 
+	"github.com/mivanov93/git-tainted/db"
 	"github.com/mivanov93/git-tainted/internal/model"
 )
 
 func newTestStore(tb testing.TB) model.Store {
 	tb.Helper()
-	root := repoRoot(tb)
 	f, err := os.CreateTemp("", "git-tainted-test-*.db")
 	if err != nil {
 		tb.Fatalf("create temp db file: %v", err)
@@ -23,14 +22,10 @@ func newTestStore(tb testing.TB) model.Store {
 	}
 	tb.Cleanup(func() { _ = os.Remove(f.Name()) })
 
-	s, err := Open(f.Name(), filepath.Join(root, "db", "migrations"))
+	// Open migrates from the embedded migration FS (no db/ folder needed).
+	s, err := Open(f.Name(), db.SQLiteMigrations)
 	if err != nil {
 		tb.Fatalf("Open: %v", err)
-	}
-	ctx := context.Background()
-	if err := s.Migrate(ctx); err != nil {
-		_ = s.Close()
-		tb.Fatalf("Migrate: %v", err)
 	}
 	tb.Cleanup(func() { _ = s.Close() })
 	return s

@@ -1,8 +1,8 @@
-package store
+package sqlite
 
 import (
 	"github.com/mivanov93/git-tainted/internal/model"
-	"github.com/mivanov93/git-tainted/internal/store/sqlc"
+	"github.com/mivanov93/git-tainted/internal/store/sqlite/sqlc"
 )
 
 // ---- Remotes ---------------------------------------------------------------

@@ -9,39 +9,18 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"os"
-	"path/filepath"
-	"runtime"
 	"testing"
 
+	"github.com/mivanov93/git-tainted/db"
 	"github.com/mivanov93/git-tainted/internal/model"
-	"github.com/mivanov93/git-tainted/internal/store"
+	"github.com/mivanov93/git-tainted/internal/store/sqlite"
 )
 
-// repoRoot walks up from this file to find go.mod (the project root).
-func repoRoot(tb testing.TB) string {
-	tb.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		tb.Fatal("runtime.Caller failed")
-	}
-	dir := filepath.Dir(file)
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			tb.Fatal("go.mod not found walking to project root")
-		}
-		dir = parent
-	}
-}
-
-// NewTestStore opens an in-temp-file modernc SQLite Store with migrations
-// applied. The temp file and the Store are closed and removed via t.Cleanup.
+// NewTestStore opens an in-temp-file modernc SQLite Store with the embedded
+// migrations applied. The temp file and the Store are closed and removed via
+// t.Cleanup.
 func NewTestStore(tb testing.TB) model.Store {
 	tb.Helper()
-	root := repoRoot(tb)
 	f, err := os.CreateTemp("", "git-tainted-testutil-*.db")
 	if err != nil {
 		tb.Fatalf("testutil.NewTestStore: create temp db: %v", err)
@@ -51,13 +30,10 @@ func NewTestStore(tb testing.TB) model.Store {
 	}
 	tb.Cleanup(func() { _ = os.Remove(f.Name()) })
 
-	s, err := store.Open(f.Name(), filepath.Join(root, "db", "migrations"))
+	// sqlite.Open migrates from the embedded SQLite migration FS.
+	s, err := sqlite.Open(f.Name(), db.SQLiteMigrations)
 	if err != nil {
 		tb.Fatalf("testutil.NewTestStore: open: %v", err)
-	}
-	if err := s.Migrate(context.Background()); err != nil {
-		_ = s.Close()
-		tb.Fatalf("testutil.NewTestStore: migrate: %v", err)
 	}
 	tb.Cleanup(func() { _ = s.Close() })
 	return s

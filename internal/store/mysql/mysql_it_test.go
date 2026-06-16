@@ -13,7 +13,7 @@
 // multiple appends + a CAS-conflict path returning ErrChainCAS; LatestObservation
 // ForRef; taint insert (sticky + idempotent-unique + ack); syncs; lease
 // acquire/release with holder assertion + chain-head CAS; pagination.
-package store
+package mysql
 
 import (
 	"bytes"
@@ -22,13 +22,13 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	tcmysql "github.com/testcontainers/testcontainers-go/modules/mysql"
 
+	"github.com/mivanov93/git-tainted/db"
 	"github.com/mivanov93/git-tainted/internal/model"
 )
 
@@ -36,9 +36,10 @@ import (
 // (Docker Hub is rate-limited in this environment).
 const mysqlImage = "mysql:8.4"
 
-// newMySQLStore starts a mysql:8.4 container, opens an OpenMySQL store against it
-// (which runs the MySQL migrations), and registers cleanup. The container is
-// shared across the subtests of a single top-level test via t.Cleanup ordering.
+// newMySQLStore starts a mysql:8.4 container, opens a mysql.Open store against it
+// (which runs the embedded MySQL migrations), and registers cleanup. The
+// container is shared across the subtests of a single top-level test via
+// t.Cleanup ordering.
 func newMySQLStore(t *testing.T) (model.Store, *tcmysql.MySQLContainer) {
 	t.Helper()
 	ctx := context.Background()
@@ -64,20 +65,18 @@ func newMySQLStore(t *testing.T) (model.Store, *tcmysql.MySQLContainer) {
 		t.Fatalf("connection string: %v", err)
 	}
 
-	root := repoRoot(t)
-	migrDir := filepath.Join(root, "db", "migrations-mysql")
-
-	// OpenMySQL pings + migrates. The container log-wait can fire a touch before
-	// the server accepts app connections, so retry the open briefly.
+	// Open pings + migrates from the embedded MySQL migration FS (no db/ folder
+	// on disk). The container log-wait can fire a touch before the server accepts
+	// app connections, so retry the open briefly.
 	var s model.Store
 	deadline := time.Now().Add(60 * time.Second)
 	for {
-		s, err = OpenMySQL(dsn, migrDir)
+		s, err = Open(dsn, db.MySQLMigrations)
 		if err == nil {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("OpenMySQL did not become ready: %v", err)
+			t.Fatalf("mysql.Open did not become ready: %v", err)
 		}
 		time.Sleep(500 * time.Millisecond)
 	}

@@ -1,11 +1,12 @@
-package store
+package sqlite
 
 import (
 	"context"
 	"fmt"
 
 	"github.com/mivanov93/git-tainted/internal/model"
-	"github.com/mivanov93/git-tainted/internal/store/sqlc"
+	"github.com/mivanov93/git-tainted/internal/store"
+	"github.com/mivanov93/git-tainted/internal/store/sqlite/sqlc"
 )
 
 // sqliteTx implements model.Tx inside a single SQLite write transaction.
@@ -51,14 +52,14 @@ func (t *sqliteTx) AppendObservation(ctx context.Context, o *model.Observation) 
 		return 0, fmt.Errorf("get chain head: %w", err)
 	}
 	prevHash := headRow.ChainHeadHash
-	if len(prevHash) != chainHashLen {
+	if len(prevHash) != store.ChainHashLen {
 		return 0, fmt.Errorf("remote %d chain_head malformed (len %d)", o.RemoteID, len(prevHash))
 	}
 	seq := model.Seq(headRow.ChainLen + 1)
 
 	o.Seq = seq
 	o.PrevHash = prevHash
-	o.RowHash = RowHash(prevHash, o)
+	o.RowHash = store.RowHash(prevHash, o)
 
 	var canonicalMeta interface{}
 	if o.CanonicalMeta != "" {

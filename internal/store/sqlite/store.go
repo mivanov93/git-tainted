@@ -1,17 +1,19 @@
-// Package store implements model.Store over sqlc-generated queries against
+// Package sqlite implements model.Store over sqlc-generated queries against
 // modernc.org/sqlite (pure-Go, CGO-free).
-package store
+package sqlite
 
 import (
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
 	"strings"
 	"time"
 
 	"github.com/mivanov93/git-tainted/internal/model"
-	"github.com/mivanov93/git-tainted/internal/store/sqlc"
+	"github.com/mivanov93/git-tainted/internal/store"
+	"github.com/mivanov93/git-tainted/internal/store/sqlite/sqlc"
 )
 
 // nowNS returns the current wall time as unix-nanoseconds.
@@ -19,22 +21,24 @@ func nowNS() int64 { return time.Now().UnixNano() }
 
 // sqliteStore implements model.Store over sqlc queries + modernc.org/sqlite.
 type sqliteStore struct {
-	db      *sql.DB
-	q       *sqlc.Queries
-	migrDir string
+	db         *sql.DB
+	q          *sqlc.Queries
+	migrations fs.FS
 }
 
-// Open opens (or creates) a SQLite DB at path and returns an un-migrated Store.
-// Call Migrate before use.
-func Open(path, migrDir string) (model.Store, error) {
+// Open opens (or creates) a SQLite DB at path, applies the migrations from the
+// provided fs.FS (e.g. db.SQLiteMigrations — embedded, so no db/ folder is
+// needed on disk), and returns a ready Store. Migration is idempotent, so a
+// subsequent Migrate call is a no-op re-run.
+func Open(path string, migrations fs.FS) (model.Store, error) {
 	db, err := sql.Open(DriverName, path)
 	if err != nil {
-		return nil, fmt.Errorf("store.Open: %w", err)
+		return nil, fmt.Errorf("sqlite.Open: %w", err)
 	}
 	db.SetMaxOpenConns(1) // SQLite WAL: one writer, serialized
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("store.Open ping: %w", err)
+		return nil, fmt.Errorf("sqlite.Open ping: %w", err)
 	}
 	for _, pragma := range []string{
 		"PRAGMA journal_mode = WAL",
@@ -42,10 +46,15 @@ func Open(path, migrDir string) (model.Store, error) {
 	} {
 		if _, err := db.Exec(pragma); err != nil {
 			_ = db.Close()
-			return nil, fmt.Errorf("store.Open %s: %w", pragma, err)
+			return nil, fmt.Errorf("sqlite.Open %s: %w", pragma, err)
 		}
 	}
-	return &sqliteStore{db: db, q: sqlc.New(db), migrDir: migrDir}, nil
+	s := &sqliteStore{db: db, q: sqlc.New(db), migrations: migrations}
+	if err := store.RunMigrations(db, migrations); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("sqlite.Open migrate: %w", err)
+	}
+	return s, nil
 }
 
 func (s *sqliteStore) Ping(ctx context.Context) error {
@@ -56,8 +65,8 @@ func (s *sqliteStore) Close() error {
 	return s.db.Close()
 }
 
-func (s *sqliteStore) Migrate(ctx context.Context) error {
-	return runMigrations(s.db, s.migrDir)
+func (s *sqliteStore) Migrate(_ context.Context) error {
+	return store.RunMigrations(s.db, s.migrations)
 }
 
 // ---- RemoteStore ------------------------------------------------------------

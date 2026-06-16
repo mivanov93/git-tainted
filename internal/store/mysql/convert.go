@@ -1,10 +1,10 @@
-package store
+package mysql
 
 import (
 	"database/sql"
 
 	"github.com/mivanov93/git-tainted/internal/model"
-	"github.com/mivanov93/git-tainted/internal/store/mysqlc"
+	"github.com/mivanov93/git-tainted/internal/store/mysql/mysqlc"
 )
 
 // This file is the MySQL boundary mirror of convert.go. It maps mysqlc row

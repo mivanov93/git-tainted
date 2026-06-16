@@ -1,12 +1,12 @@
 version: "2"
 sql:
   - engine: "sqlite"
-    schema: "db/migrations"
-    queries: "internal/store/sqlc/queries"
+    schema: "db/migrations-sqlite"
+    queries: "internal/store/sqlite/sqlc/queries"
     gen:
       go:
         package: "sqlc"
-        out: "internal/store/sqlc"
+        out: "internal/store/sqlite/sqlc"
         sql_package: "database/sql"
         emit_interface: true
         emit_json_tags: false
@@ -17,11 +17,11 @@ sql:
               type: "[]byte"
   - engine: "mysql"
     schema: "db/migrations-mysql"
-    queries: "internal/store/mysqlc/queries"
+    queries: "internal/store/mysql/mysqlc/queries"
     gen:
       go:
         package: "mysqlc"
-        out: "internal/store/mysqlc"
+        out: "internal/store/mysql/mysqlc"
         sql_package: "database/sql"
         emit_interface: true
         emit_json_tags: false
