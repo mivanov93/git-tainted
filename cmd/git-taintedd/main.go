@@ -72,14 +72,45 @@ migrations are embedded in the binary (no db/ folder needed at runtime).
 Usage:
   git-taintedd [--version|-v] [--help|-h]
 
-Key environment variables (see .env.example for the full list):
-  GT_DB_DRIVER     sqlite (default) | mysql
-  GT_SQLITE_PATH   SQLite DB path (driver=sqlite)
-  GT_MYSQL_DSN     MySQL DSN (driver=mysql; needs multiStatements=true&clientFoundRows=true)
-  GT_LISTEN_ADDR   HTTP listen address (default 127.0.0.1:8080; serves HTTP/1.1 + h2c)
-  GT_METRICS_ADDR  Prometheus metrics address
-  GT_SYNC_DEFAULT_INTERVAL_NS  GT_SCHEDULER_TICK_NS  GT_STALENESS_BUDGET_NS
-  GT_GIT_BIN  GT_GIT_TIMEOUT_NS  GT_PROTOCOL_ALLOWLIST  GT_LOG_LEVEL
+Environment variables (all GT_*):
+
+  Database
+  --------
+  GT_DB_DRIVER                 Storage backend: sqlite (default) or mysql
+  GT_SQLITE_PATH               Path to the SQLite DB file (required if driver=sqlite)
+  GT_MYSQL_DSN                 MySQL DSN (required if driver=mysql);
+                               needs multiStatements=true&parseTime=false&clientFoundRows=true
+
+  HTTP server
+  -----------
+  GT_LISTEN_ADDR               API listen address          (default: 127.0.0.1:8080)
+                               Serves HTTP/1.1 + h2c on a single cleartext listener.
+
+  Scheduler / sync
+  ----------------
+  GT_SYNC_CONCURRENCY          Max concurrent in-flight syncs        (default: 4)
+  GT_SYNC_DEFAULT_INTERVAL_NS  Default sync interval in unix-ns       (default: 300000000000  = 5 min)
+  GT_SCHEDULER_TICK_NS         Scheduler wake-up tick interval in ns  (default: 5000000000   = 5 s)
+  GT_STALENESS_BUDGET_NS       How far past due a sync may be before
+                               it is considered stale, in ns           (default: 3600000000000 = 1 h)
+
+  Git runner
+  ----------
+  GT_GIT_BIN                   Path or name of the git binary         (default: git)
+  GT_GIT_TIMEOUT_NS            Per-ls-remote deadline in ns           (default: 60000000000 = 60 s)
+  GT_PROTOCOL_ALLOWLIST        Colon-separated git transport schemes
+                               the syncer will accept                  (default: https:ssh)
+  GT_HOST_ALLOWLIST            Colon-separated allowed host patterns;
+                               empty = allow all                       (default: "")
+
+  Observability
+  -------------
+  GT_LOG_LEVEL                 Structured log level: debug|info|warn|error (default: info)
+  GT_METRICS_ADDR              Dedicated Prometheus listener address.
+                               Empty (default) = metrics DISABLED — no /metrics endpoint,
+                               no collection. Set to e.g. 127.0.0.1:9090 to enable.
+  GT_PPROF_ENABLED             Expose /debug/pprof/* on the API listener (default: false).
+                               Set to true only in controlled environments.
 `
 
 // wallClock is the real time implementation of model.Clock.
@@ -136,21 +167,23 @@ func run() error {
 	syncer := tlsync.NewRemoteSyncer(st, gitRunner, lk, clk, holder)
 
 	// ---- HTTP handler ---------------------------------------------------------
-	metrics := api.NewMetrics()
 	apiHandler := api.NewServer(st, clk, syncer)
-	opsHandler := api.OpsHandlerFull(st, metrics)
+	// OpsHandler mounts /healthz, /readyz, and conditionally /debug/pprof/*.
+	opsHandler := api.OpsHandler(st, cfg.PprofEnabled)
 
-	// Mount ops routes alongside the API routes. API routes are all under /v1/
-	// and /healthz; ops adds /readyz, /metrics, /debug/pprof.
+	// Mount ops routes alongside the API routes. API routes are all under /v1/.
+	// /metrics is served on the dedicated metrics listener only (when configured).
 	mux := http.NewServeMux()
 	mux.Handle("/", apiHandler)
+	mux.Handle("/healthz", opsHandler)
 	mux.Handle("/readyz", opsHandler)
-	mux.Handle("/metrics", opsHandler)
-	mux.Handle("/debug/pprof/", opsHandler)
-	mux.Handle("/debug/pprof/cmdline", opsHandler)
-	mux.Handle("/debug/pprof/profile", opsHandler)
-	mux.Handle("/debug/pprof/symbol", opsHandler)
-	mux.Handle("/debug/pprof/trace", opsHandler)
+	if cfg.PprofEnabled {
+		mux.Handle("/debug/pprof/", opsHandler)
+		mux.Handle("/debug/pprof/cmdline", opsHandler)
+		mux.Handle("/debug/pprof/profile", opsHandler)
+		mux.Handle("/debug/pprof/symbol", opsHandler)
+		mux.Handle("/debug/pprof/trace", opsHandler)
+	}
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
@@ -163,6 +196,30 @@ func run() error {
 	protocols.SetHTTP1(true)
 	protocols.SetUnencryptedHTTP2(true)
 	srv.Protocols = protocols
+
+	// ---- Metrics server (optional) -------------------------------------------
+	// When GT_METRICS_ADDR is non-empty, start a dedicated listener that exposes
+	// only GET /metrics. When empty (default), no metrics are collected or served.
+	var metricsSrv *http.Server
+	if cfg.MetricsAddr != "" {
+		m := api.NewMetrics()
+		metricsSrv = &http.Server{
+			Addr:              cfg.MetricsAddr,
+			Handler:           api.MetricsHandler(m),
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		metricsErrCh := make(chan error, 1)
+		go func() {
+			log.Info("metrics server starting", "addr", cfg.MetricsAddr)
+			if err := metricsSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				metricsErrCh <- err
+				return
+			}
+			metricsErrCh <- nil
+		}()
+		// Capture the channel so shutdown can drain it later.
+		_ = metricsErrCh
+	}
 
 	// ---- Signal context -------------------------------------------------------
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -189,7 +246,11 @@ func run() error {
 		errCh <- nil
 	}()
 
-	log.Info("server ready", "listen_addr", cfg.ListenAddr, "metrics_addr", cfg.MetricsAddr)
+	if cfg.MetricsAddr != "" {
+		log.Info("server ready", "listen_addr", cfg.ListenAddr, "metrics_addr", cfg.MetricsAddr, "pprof", cfg.PprofEnabled)
+	} else {
+		log.Info("server ready", "listen_addr", cfg.ListenAddr, "metrics", "disabled", "pprof", cfg.PprofEnabled)
+	}
 
 	// ---- Graceful shutdown ----------------------------------------------------
 	select {
@@ -209,11 +270,27 @@ func run() error {
 			return err
 		}
 		log.Info("http server drained cleanly")
+
+		// 3. Shutdown metrics server (if running).
+		if metricsSrv != nil {
+			mShutCtx, mCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer mCancel()
+			if err := metricsSrv.Shutdown(mShutCtx); err != nil {
+				log.Error("metrics server shutdown failed", "err", err)
+			} else {
+				log.Info("metrics server drained cleanly")
+			}
+		}
 		return nil
 
 	case err := <-errCh:
 		schedCancel()
 		<-schedDone
+		if metricsSrv != nil {
+			mShutCtx, mCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer mCancel()
+			_ = metricsSrv.Shutdown(mShutCtx)
+		}
 		if err != nil {
 			log.Error("http server failed", "err", err)
 		}

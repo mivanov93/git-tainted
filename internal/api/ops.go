@@ -6,29 +6,22 @@ package api
 import (
 	"context"
 	"net/http"
-	"net/http/pprof" //nolint:gosec // G108: pprof is served on a dedicated metrics addr, not the public addr
+	"net/http/pprof" //nolint:gosec // G108: pprof is guarded by PprofEnabled (default false), not always on
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/mivanov93/git-tainted/internal/model"
 )
 
-// OpsHandler returns the operational probe mux: /healthz (liveness) and /readyz
-// (readiness, always 200 — no store). This form is kept for backward compat with
-// existing unit tests; for production use OpsHandlerFull which wires the store.
-func OpsHandler() http.Handler {
-	return OpsHandlerFull(nil, nil)
-}
-
-// OpsHandlerFull returns the operational probe mux with:
+// OpsHandler returns the operational probe mux:
 //   - GET /healthz — liveness (always 200)
 //   - GET /readyz  — readiness (pings the Store; 200 if ok, 503 if nil/fail)
-//   - GET /metrics — Prometheus (if m != nil)
-//   - /debug/pprof/ — runtime profiling (always mounted; caller restricts to internal addr)
+//   - /debug/pprof/* — runtime profiling (only when pprofEnabled is true)
 //
 // store may be nil; when nil /readyz returns 200 unconditionally.
-// m may be nil; when nil /metrics returns 404.
-func OpsHandlerFull(store model.Store, m *Metrics) http.Handler {
+// /metrics is NOT served on this handler — use MetricsHandler on a dedicated
+// metrics listener instead.
+func OpsHandler(store model.Store, pprofEnabled bool) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -50,16 +43,23 @@ func OpsHandlerFull(store model.Store, m *Metrics) http.Handler {
 		_, _ = w.Write([]byte("ready"))
 	})
 
-	if m != nil {
-		mux.Handle("GET /metrics", promhttp.HandlerFor(m.Registry, promhttp.HandlerOpts{}))
+	if pprofEnabled {
+		// pprof endpoints (§14 ops) — only when GT_PPROF_ENABLED=true.
+		mux.HandleFunc("/debug/pprof/", pprof.Index)
+		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	}
 
-	// pprof endpoints (§14 ops).
-	mux.HandleFunc("/debug/pprof/", pprof.Index)
-	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	return mux
+}
 
+// MetricsHandler returns an http.Handler that serves GET /metrics via Prometheus.
+// It is intended to be mounted on a DEDICATED metrics listener (GT_METRICS_ADDR),
+// never on the public API port.
+func MetricsHandler(m *Metrics) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("GET /metrics", promhttp.HandlerFor(m.Registry, promhttp.HandlerOpts{}))
 	return mux
 }
