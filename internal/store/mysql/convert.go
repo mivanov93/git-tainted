@@ -2,6 +2,7 @@ package mysql
 
 import (
 	"database/sql"
+	"time"
 
 	"github.com/mivanov93/git-tainted/internal/model"
 	"github.com/mivanov93/git-tainted/internal/store/mysql/mysqlc"
@@ -24,8 +25,8 @@ func remoteFromMySQLRow(r mysqlc.Remote) model.Remote {
 		URL:                 r.Url,
 		NormalizedURL:       r.NormalizedUrl,
 		Transport:           model.Transport(r.Transport),
-		SyncIntervalNS:      r.SyncIntervalNs,
-		StalenessBudgetNS:   r.StalenessBudgetNs,
+		SyncInterval:        time.Duration(r.SyncIntervalNs),
+		StalenessBudget:     time.Duration(r.StalenessBudgetNs),
 		TaintAnyTagDeletion: r.TaintAnyTagDeletion != 0,
 		Status:              model.RemoteStatus(r.Status),
 		LastOkNS:            r.LastOkNs,

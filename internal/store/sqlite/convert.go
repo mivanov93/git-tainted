@@ -1,6 +1,8 @@
 package sqlite
 
 import (
+	"time"
+
 	"github.com/mivanov93/git-tainted/internal/model"
 	"github.com/mivanov93/git-tainted/internal/store/sqlite/sqlc"
 )
@@ -13,8 +15,8 @@ func remoteFromRow(r sqlc.Remote) (model.Remote, error) {
 		URL:                 r.Url,
 		NormalizedURL:       r.NormalizedUrl,
 		Transport:           model.Transport(r.Transport),
-		SyncIntervalNS:      r.SyncIntervalNs,
-		StalenessBudgetNS:   r.StalenessBudgetNs,
+		SyncInterval:        time.Duration(r.SyncIntervalNs),
+		StalenessBudget:     time.Duration(r.StalenessBudgetNs),
 		TaintAnyTagDeletion: r.TaintAnyTagDeletion != 0,
 		Status:              model.RemoteStatus(r.Status),
 		LastOkNS:            r.LastOkNs,

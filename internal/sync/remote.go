@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/mivanov93/git-tainted/internal/model"
 )
@@ -42,8 +43,8 @@ func NewRemoteSyncer(store syncStore, git model.GitRunner, lk model.Lock, clk mo
 	return &RemoteSyncer{store: store, git: git, lock: lk, clk: clk, holder: holder}
 }
 
-// leaseTTLNS bounds a sync's writer lease (2 minutes).
-const leaseTTLNS = 120_000_000_000
+// leaseTTL bounds a sync's writer lease (2 minutes).
+const leaseTTL = 2 * time.Minute
 
 // SyncRemote performs one ls-remote-path sync for a remote (§6).
 func (rs *RemoteSyncer) SyncRemote(ctx context.Context, remoteID model.RemoteID) (*SyncResult, error) {
@@ -52,7 +53,7 @@ func (rs *RemoteSyncer) SyncRemote(ctx context.Context, remoteID model.RemoteID)
 		return nil, fmt.Errorf("get remote: %w", err)
 	}
 
-	lease, err := rs.lock.AcquireRemoteLease(ctx, remoteID, rs.holder, leaseTTLNS)
+	lease, err := rs.lock.AcquireRemoteLease(ctx, remoteID, rs.holder, leaseTTL)
 	if err != nil {
 		return nil, fmt.Errorf("acquire lease: %w", err)
 	}
@@ -151,13 +152,13 @@ func (rs *RemoteSyncer) SyncRemote(ctx context.Context, remoteID model.RemoteID)
 				return err
 			}
 			obs := &model.Observation{
-				RemoteID:     remoteID,
-				RefID:        prev.ID,
-				SyncID:       syncID,
-				EventType:    delta.Event,
-				PrevOID:      prev.CurrentOID,
+				RemoteID:      remoteID,
+				RefID:         prev.ID,
+				SyncID:        syncID,
+				EventType:     delta.Event,
+				PrevOID:       prev.CurrentOID,
 				PrevPeeledOID: prev.CurrentPeeledOID,
-				ObservedAtNS: nowNS2,
+				ObservedAtNS:  nowNS2,
 			}
 			if _, err := tx.AppendObservation(ctx, obs); err != nil {
 				return err

@@ -31,7 +31,7 @@ func newE2EServer(tb testing.TB) (*httptest.Server, model.Store, *testutil.FakeC
 
 	// Allow http:// for the loopback git fixture server (the protocol allowlist
 	// controls which git transport protocols the git runner accepts).
-	runner := git.NewRunnerWithProtocols("git", 30_000_000_000, "http:https:ssh")
+	runner := git.NewRunnerWithProtocols("git", 30*time.Second, "http:https:ssh")
 	lk := lock.NewDBLease(s, clk)
 	syncer := tlsync.NewRemoteSyncer(s, runner, lk, clk, "e2e-test")
 
@@ -59,8 +59,8 @@ func seedFixtureRemote(tb testing.TB, ctx context.Context, s model.Store, clk *t
 		URL:                 rawURL,
 		NormalizedURL:       rawURL,
 		Transport:           model.TransportHTTPS,
-		SyncIntervalNS:      300_000_000_000,
-		StalenessBudgetNS:   3_600_000_000_000,
+		SyncInterval:        5 * time.Minute,
+		StalenessBudget:     time.Hour,
 		TaintAnyTagDeletion: true,
 		Status:              model.RemoteActive,
 		ChainHeadHash:       make([]byte, 32),
@@ -242,7 +242,7 @@ func TestE2E_FullSyncAndVerify(t *testing.T) {
 	t.Logf("c3=%s new v2.0(ann)=%s", c3.Hex(), newAnnOID.Hex())
 
 	// Advance fake clock so the second sync has a strictly-later timestamp.
-	clk.Advance(1_000_000_000) // +1s
+	clk.Advance(1_000_000_000)   // +1s
 	time.Sleep(time.Millisecond) // ensure wall-time ordering too
 
 	if _, err := syncer.SyncRemote(ctx, rid); err != nil {

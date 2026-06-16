@@ -3,6 +3,7 @@ package sync_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/mivanov93/git-tainted/internal/git"
 	"github.com/mivanov93/git-tainted/internal/lock"
@@ -37,7 +38,7 @@ func TestSyncRemote_RecordsTagsAndChain(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	syncer := tlsync.NewRemoteSyncer(s, git.NewRunnerWithProtocols("git", 30_000_000_000, "http:https:ssh"), lock.NewDBLease(s, clk), clk, "inst-test")
+	syncer := tlsync.NewRemoteSyncer(s, git.NewRunnerWithProtocols("git", 30*time.Second, "http:https:ssh"), lock.NewDBLease(s, clk), clk, "inst-test")
 
 	res, err := syncer.SyncRemote(ctx, rid)
 	if err != nil {
@@ -122,7 +123,7 @@ func TestSyncRemote_TaintsOnOIDChange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	syncer := tlsync.NewRemoteSyncer(s, git.NewRunnerWithProtocols("git", 30_000_000_000, "http:https:ssh"), lock.NewDBLease(s, clk), clk, "inst-test")
+	syncer := tlsync.NewRemoteSyncer(s, git.NewRunnerWithProtocols("git", 30*time.Second, "http:https:ssh"), lock.NewDBLease(s, clk), clk, "inst-test")
 
 	// First sync: tag created.
 	if _, err := syncer.SyncRemote(ctx, rid); err != nil {

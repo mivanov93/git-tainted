@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"testing"
+	"time"
 )
 
 func lookup(m map[string]string) func(string) (string, bool) {
@@ -31,20 +32,20 @@ func TestLoad(t *testing.T) {
 				if c.SyncConcurrency != 4 {
 					t.Errorf("SyncConcurrency = %d, want 4", c.SyncConcurrency)
 				}
-				if c.SyncDefaultIntervalNS != 300_000_000_000 {
-					t.Errorf("SyncDefaultIntervalNS = %d, want 300e9", c.SyncDefaultIntervalNS)
+				if c.SyncDefaultInterval != 5*time.Minute {
+					t.Errorf("SyncDefaultInterval = %d, want 5m", c.SyncDefaultInterval)
 				}
-				if c.SchedulerTickNS != 5_000_000_000 {
-					t.Errorf("SchedulerTickNS = %d, want 5e9", c.SchedulerTickNS)
+				if c.SchedulerTick != 5*time.Second {
+					t.Errorf("SchedulerTick = %d, want 5s", c.SchedulerTick)
 				}
-				if c.StalenessBudgetNS != 3_600_000_000_000 {
-					t.Errorf("StalenessBudgetNS = %d, want 3600e9", c.StalenessBudgetNS)
+				if c.StalenessBudget != time.Hour {
+					t.Errorf("StalenessBudget = %d, want 1h", c.StalenessBudget)
 				}
 				if c.GitBin != "git" {
 					t.Errorf("GitBin = %q, want git", c.GitBin)
 				}
-				if c.GitTimeoutNS != 60_000_000_000 {
-					t.Errorf("GitTimeoutNS = %d, want 60e9", c.GitTimeoutNS)
+				if c.GitTimeout != time.Minute {
+					t.Errorf("GitTimeout = %d, want 60s", c.GitTimeout)
 				}
 				if c.ProtocolAllowlist != "https:ssh" {
 					t.Errorf("ProtocolAllowlist = %q, want https:ssh", c.ProtocolAllowlist)
@@ -66,8 +67,8 @@ func TestLoad(t *testing.T) {
 				if c.CacheMaxEntries != 100_000 {
 					t.Errorf("CacheMaxEntries = %d, want 100000", c.CacheMaxEntries)
 				}
-				if c.CacheTTLNS != 60_000_000_000 {
-					t.Errorf("CacheTTLNS = %d, want 60e9", c.CacheTTLNS)
+				if c.CacheTTL != time.Minute {
+					t.Errorf("CacheTTL = %d, want 60s", c.CacheTTL)
 				}
 			},
 		},
@@ -98,8 +99,8 @@ func TestLoad(t *testing.T) {
 				if c.HostAllowlist != "github.com,gitlab.com" {
 					t.Errorf("HostAllowlist = %q", c.HostAllowlist)
 				}
-				if c.StalenessBudgetNS != 7200000000000 {
-					t.Errorf("StalenessBudgetNS = %d, want 7200e9", c.StalenessBudgetNS)
+				if c.StalenessBudget != 2*time.Hour {
+					t.Errorf("StalenessBudget = %d, want 2h", c.StalenessBudget)
 				}
 				if c.CacheEnabled {
 					t.Errorf("CacheEnabled = true, want false (GT_CACHE_ENABLED=false)")
@@ -108,8 +109,8 @@ func TestLoad(t *testing.T) {
 					t.Errorf("CacheMaxEntries = %d, want 5000", c.CacheMaxEntries)
 				}
 				// TTL=0 is a valid override (disables the TTL backstop).
-				if c.CacheTTLNS != 0 {
-					t.Errorf("CacheTTLNS = %d, want 0", c.CacheTTLNS)
+				if c.CacheTTL != 0 {
+					t.Errorf("CacheTTL = %d, want 0", c.CacheTTL)
 				}
 			},
 		},
@@ -168,8 +169,8 @@ func TestLoad(t *testing.T) {
 		{
 			name: "GT_METRICS_ADDR and GT_PPROF_ENABLED parsed",
 			env: map[string]string{
-				"GT_SQLITE_PATH":  "/data/x.db",
-				"GT_METRICS_ADDR": "127.0.0.1:9090",
+				"GT_SQLITE_PATH":   "/data/x.db",
+				"GT_METRICS_ADDR":  "127.0.0.1:9090",
 				"GT_PPROF_ENABLED": "true",
 			},
 			want: func(t *testing.T, c *Config) {

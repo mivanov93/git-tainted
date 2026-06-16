@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/mivanov93/git-tainted/internal/model"
 )
@@ -301,7 +302,7 @@ func (f *fakeStore) Close() error                  { return nil }
 var _ model.Store = (*fakeStore)(nil)
 
 // enabledCfg is the standard "cache on, TTL on" config for the behavioral tests.
-func enabledCfg() Config { return Config{Enabled: true, MaxEntries: 1000, TTLNS: 60_000_000_000} }
+func enabledCfg() Config { return Config{Enabled: true, MaxEntries: 1000, TTL: time.Minute} }
 
 // ---- tests -----------------------------------------------------------------
 
@@ -656,7 +657,7 @@ func TestRaceNoStaleBeyondCommit(t *testing.T) {
 	ctx := context.Background()
 	f := newFakeStore()
 	f.seed(1, "https://x/a.git", 10, "v1")
-	c := Wrap(f, Config{Enabled: true, MaxEntries: 1000, TTLNS: 0})
+	c := Wrap(f, Config{Enabled: true, MaxEntries: 1000, TTL: 0})
 
 	var committed atomic.Int64
 	var failed atomic.Bool
@@ -776,14 +777,14 @@ func TestReturnedObjectsAreIsolatedFromCache(t *testing.T) {
 			t.Fatal(err)
 		}
 		r1.Status = model.RemotePaused // caller mutates what it received
-		r1.SyncIntervalNS = 999
+		r1.SyncInterval = 999
 
 		r2, err := c.GetRemote(ctx, 1) // hit → must be a pristine copy
 		if err != nil {
 			t.Fatal(err)
 		}
-		if r2.Status == model.RemotePaused || r2.SyncIntervalNS == 999 {
-			t.Fatalf("caller mutation leaked into the cache: Status=%q interval=%d", r2.Status, r2.SyncIntervalNS)
+		if r2.Status == model.RemotePaused || r2.SyncInterval == 999 {
+			t.Fatalf("caller mutation leaked into the cache: Status=%q interval=%d", r2.Status, r2.SyncInterval)
 		}
 		if n := f.getRemoteN.Load(); n != 1 {
 			t.Fatalf("want 1 inner GetRemote (2nd served from cache), got %d", n)

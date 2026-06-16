@@ -66,7 +66,7 @@ func TestConsolidate_AllUnreachable(t *testing.T) {
 		{ServerURL: "http://a", Reachable: false, Err: fmt.Errorf("dial error")},
 		{ServerURL: "http://b", Reachable: false, Err: fmt.Errorf("dial error")},
 	}
-	con := consolidate(results, ModeQuorum, int64(15*time.Minute))
+	con := consolidate(results, ModeQuorum, 15*time.Minute)
 	if con.ExitCode != 2 {
 		t.Fatalf("want exit 2, got %d", con.ExitCode)
 	}
@@ -81,7 +81,7 @@ func TestConsolidate_QuorumThreeOK(t *testing.T) {
 		{ServerURL: "http://b", Reachable: true, Status: "ok", Confidence: "authoritative", LastSyncedNS: nsAgo(5 * time.Minute)},
 		{ServerURL: "http://c", Reachable: true, Status: "ok", Confidence: "authoritative", LastSyncedNS: nsAgo(5 * time.Minute)},
 	}
-	con := consolidate(results, ModeQuorum, int64(15*time.Minute))
+	con := consolidate(results, ModeQuorum, 15*time.Minute)
 	if con.FinalStatus != "ok" {
 		t.Fatalf("want ok, got %q (reason: %s)", con.FinalStatus, con.Reason)
 	}
@@ -100,7 +100,7 @@ func TestConsolidate_QuorumMajorityOKWithDissent(t *testing.T) {
 		{ServerURL: "http://c", Reachable: true, Status: "tainted", LastSyncedNS: freshSyncNS},
 	}
 	// All synced at the same time → gap = 0, within 15m window.
-	con := consolidate(results, ModeQuorum, int64(15*time.Minute))
+	con := consolidate(results, ModeQuorum, 15*time.Minute)
 	if con.FinalStatus != "ok" {
 		t.Fatalf("want ok majority, got %q (reason: %s)", con.FinalStatus, con.Reason)
 	}
@@ -121,7 +121,7 @@ func TestConsolidate_QuorumMajorityOKWithDissent(t *testing.T) {
 
 // KEY CASE: stale ok-majority + fresh tainted → tainted wins (freshness override).
 func TestConsolidate_QuorumFreshnessOverrideTainted(t *testing.T) {
-	window := int64(15 * time.Minute)
+	window := 15 * time.Minute
 	// Good servers last synced 3 hours ago (stale).
 	goodSyncNS := nsAgo(3 * time.Hour)
 	// Bad server synced 2 minutes ago (fresh, sees the tamper).
@@ -151,7 +151,7 @@ func TestConsolidate_QuorumFreshnessOverrideTainted(t *testing.T) {
 
 // Freshness boundary: gap just UNDER the window → majority wins (ok).
 func TestConsolidate_QuorumFreshnessBoundaryUnder(t *testing.T) {
-	window := int64(15 * time.Minute)
+	window := 15 * time.Minute
 	// Good synced 16m ago, bad synced 2m ago → gap = 14m < 15m window.
 	goodSyncNS := nsAgo(16 * time.Minute)
 	badSyncNS := nsAgo(2 * time.Minute)
@@ -170,7 +170,7 @@ func TestConsolidate_QuorumFreshnessBoundaryUnder(t *testing.T) {
 
 // Freshness boundary: gap just OVER the window → tainted override.
 func TestConsolidate_QuorumFreshnessBoundaryOver(t *testing.T) {
-	window := int64(15 * time.Minute)
+	window := 15 * time.Minute
 	// Good synced 17m ago, bad synced 1m ago → gap = 16m > 15m window.
 	goodSyncNS := nsAgo(17 * time.Minute)
 	badSyncNS := nsAgo(1 * time.Minute)
@@ -195,7 +195,7 @@ func TestConsolidate_UnanimousDisagreement(t *testing.T) {
 		{ServerURL: "http://b", Reachable: true, Status: "tainted"},
 		{ServerURL: "http://c", Reachable: true, Status: "ok"},
 	}
-	con := consolidate(results, ModeUnanimous, int64(15*time.Minute))
+	con := consolidate(results, ModeUnanimous, 15*time.Minute)
 	if con.FinalStatus != "no_consensus" {
 		t.Fatalf("want no_consensus, got %q", con.FinalStatus)
 	}
@@ -209,7 +209,7 @@ func TestConsolidate_UnanimousAgree(t *testing.T) {
 		{ServerURL: "http://a", Reachable: true, Status: "ok", Confidence: "authoritative"},
 		{ServerURL: "http://b", Reachable: true, Status: "ok", Confidence: "authoritative"},
 	}
-	con := consolidate(results, ModeUnanimous, int64(15*time.Minute))
+	con := consolidate(results, ModeUnanimous, 15*time.Minute)
 	if con.FinalStatus != "ok" {
 		t.Fatalf("want ok, got %q (reason: %s)", con.FinalStatus, con.Reason)
 	}
@@ -223,7 +223,7 @@ func TestConsolidate_AnyBadWithTainted(t *testing.T) {
 		{ServerURL: "http://a", Reachable: true, Status: "ok"},
 		{ServerURL: "http://b", Reachable: true, Status: "tainted", LastSyncedNS: nsAgo(1 * time.Minute)},
 	}
-	con := consolidate(results, ModeAnyBad, int64(15*time.Minute))
+	con := consolidate(results, ModeAnyBad, 15*time.Minute)
 	if con.FinalStatus != "tainted" {
 		t.Fatalf("want tainted, got %q", con.FinalStatus)
 	}
@@ -237,7 +237,7 @@ func TestConsolidate_AnyBadAllOK(t *testing.T) {
 		{ServerURL: "http://a", Reachable: true, Status: "ok"},
 		{ServerURL: "http://b", Reachable: true, Status: "ok"},
 	}
-	con := consolidate(results, ModeAnyBad, int64(15*time.Minute))
+	con := consolidate(results, ModeAnyBad, 15*time.Minute)
 	if con.FinalStatus != "ok" {
 		t.Fatalf("want ok, got %q", con.FinalStatus)
 	}
@@ -253,7 +253,7 @@ func TestConsolidate_FirstConclusiveWins(t *testing.T) {
 		{ServerURL: "http://c", Reachable: true, Status: "ok"},
 	}
 	// "first" in configured order: a=unreachable, b=tainted (conclusive) → tainted wins.
-	con := consolidate(results, ModeFirst, int64(15*time.Minute))
+	con := consolidate(results, ModeFirst, 15*time.Minute)
 	if con.FinalStatus != "tainted" {
 		t.Fatalf("want tainted (first conclusive), got %q", con.FinalStatus)
 	}
@@ -267,7 +267,7 @@ func TestConsolidate_FirstInconclusiveFallback(t *testing.T) {
 		{ServerURL: "http://a", Reachable: false, Err: fmt.Errorf("timeout")},
 		{ServerURL: "http://b", Reachable: true, Status: "not_tracked"},
 	}
-	con := consolidate(results, ModeFirst, int64(15*time.Minute))
+	con := consolidate(results, ModeFirst, 15*time.Minute)
 	if con.FinalStatus != "not_tracked" {
 		t.Fatalf("want not_tracked (first inconclusive), got %q", con.FinalStatus)
 	}

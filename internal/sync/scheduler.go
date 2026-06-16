@@ -1,5 +1,5 @@
 // Package sync scheduler.go — the per-remote polling scheduler (§12).
-// It selects due remotes every SchedulerTickNS, acquires the per-remote Lock
+// It selects due remotes every SchedulerTick, acquires the per-remote Lock
 // (preventing overlap with a concurrent TriggerSync), and runs SyncRemote
 // bounded by a semaphore of size SyncConcurrency.
 package sync
@@ -27,20 +27,20 @@ type Scheduler struct {
 	clk    model.Clock
 	log    *slog.Logger
 
-	tickNS      int64
+	tick        time.Duration
 	concurrency int
 }
 
 // NewScheduler constructs a Scheduler.
-// tickNS is the polling interval in nanoseconds; concurrency is the max
-// parallel SyncRemote calls in flight.
-func NewScheduler(store syncStore, syncer remoteSyncer, clk model.Clock, log *slog.Logger, tickNS int64, concurrency int) *Scheduler {
+// tick is the polling interval; concurrency is the max parallel SyncRemote
+// calls in flight.
+func NewScheduler(store syncStore, syncer remoteSyncer, clk model.Clock, log *slog.Logger, tick time.Duration, concurrency int) *Scheduler {
 	return &Scheduler{
 		store:       store,
 		syncer:      syncer,
 		clk:         clk,
 		log:         log,
-		tickNS:      tickNS,
+		tick:        tick,
 		concurrency: concurrency,
 	}
 }
@@ -51,8 +51,8 @@ func (sc *Scheduler) Start(ctx context.Context) {
 	sem := make(chan struct{}, sc.concurrency)
 	var wg sync.WaitGroup
 
-	tick := time.NewTicker(time.Duration(sc.tickNS))
-	defer tick.Stop()
+	ticker := time.NewTicker(sc.tick)
+	defer ticker.Stop()
 
 	for {
 		select {
@@ -60,7 +60,7 @@ func (sc *Scheduler) Start(ctx context.Context) {
 			// Drain all in-flight syncs before returning.
 			wg.Wait()
 			return
-		case <-tick.C:
+		case <-ticker.C:
 			sc.poll(ctx, sem, &wg)
 		}
 	}

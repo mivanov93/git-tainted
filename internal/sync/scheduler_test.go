@@ -19,7 +19,7 @@ func newTestSyncer(tb testing.TB) (*tlsync.RemoteSyncer, model.Store, *testutil.
 	tb.Helper()
 	s := testutil.NewTestStore(tb)
 	clk := testutil.NewFakeClock(1_700_000_000_000_000_000)
-	runner := git.NewRunnerWithProtocols("git", 30_000_000_000, "http:https:ssh")
+	runner := git.NewRunnerWithProtocols("git", 30*time.Second, "http:https:ssh")
 	lk := lock.NewDBLease(s, clk)
 	syncer := tlsync.NewRemoteSyncer(s, runner, lk, clk, "sched-test")
 	return syncer, s, clk
@@ -47,8 +47,8 @@ func TestScheduler_DueRemoteGetsSync(t *testing.T) {
 		Transport:           model.TransportHTTPS,
 		Status:              model.RemoteActive,
 		TaintAnyTagDeletion: true,
-		SyncIntervalNS:      1,    // 1 ns interval → always due
-		StalenessBudgetNS:   3600, // 3600 ns
+		SyncInterval:        1,    // 1 ns interval → always due
+		StalenessBudget:     3600, // 3600 ns
 		ChainHeadHash:       make([]byte, 32),
 		CreatedAtNS:         clk.NowNS(),
 		UpdatedAtNS:         clk.NowNS(),
@@ -57,8 +57,8 @@ func TestScheduler_DueRemoteGetsSync(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const tickNS = 20_000_000 // 20ms
-	sched := tlsync.NewScheduler(s, syncer, clk, newLogger(), tickNS, 4)
+	const tick = 20 * time.Millisecond
+	sched := tlsync.NewScheduler(s, syncer, clk, newLogger(), tick, 4)
 
 	schedCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
@@ -107,9 +107,9 @@ func TestScheduler_NotDueRemoteSkipped(t *testing.T) {
 		Transport:           model.TransportHTTPS,
 		Status:              model.RemoteActive,
 		TaintAnyTagDeletion: true,
-		SyncIntervalNS:      300_000_000_000,    // 5 min
-		StalenessBudgetNS:   3_600_000_000_000,  // 1 h
-		LastOkNS:            futureLastOK,        // synced recently in the "future"
+		SyncInterval:        5 * time.Minute,
+		StalenessBudget:     time.Hour,
+		LastOkNS:            futureLastOK, // synced recently in the "future"
 		ChainHeadHash:       make([]byte, 32),
 		CreatedAtNS:         clk.NowNS(),
 		UpdatedAtNS:         clk.NowNS(),
@@ -118,8 +118,8 @@ func TestScheduler_NotDueRemoteSkipped(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const tickNS = 20_000_000 // 20ms
-	sched := tlsync.NewScheduler(s, syncer, clk, newLogger(), tickNS, 4)
+	const tick = 20 * time.Millisecond
+	sched := tlsync.NewScheduler(s, syncer, clk, newLogger(), tick, 4)
 
 	schedCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
 	defer cancel()
@@ -160,8 +160,8 @@ func TestScheduler_CancelDrainsInFlight(t *testing.T) {
 		Transport:           model.TransportHTTPS,
 		Status:              model.RemoteActive,
 		TaintAnyTagDeletion: true,
-		SyncIntervalNS:      1,
-		StalenessBudgetNS:   3600,
+		SyncInterval:        1,
+		StalenessBudget:     3600,
 		ChainHeadHash:       make([]byte, 32),
 		CreatedAtNS:         clk.NowNS(),
 		UpdatedAtNS:         clk.NowNS(),
@@ -170,8 +170,8 @@ func TestScheduler_CancelDrainsInFlight(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const tickNS = 20_000_000 // 20ms
-	sched := tlsync.NewScheduler(s, syncer, clk, newLogger(), tickNS, 4)
+	const tick = 20 * time.Millisecond
+	sched := tlsync.NewScheduler(s, syncer, clk, newLogger(), tick, 4)
 
 	schedCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
@@ -262,8 +262,8 @@ func TestScheduler_ConcurrencyBounded(t *testing.T) {
 			Transport:           model.TransportHTTPS,
 			Status:              model.RemoteActive,
 			TaintAnyTagDeletion: true,
-			SyncIntervalNS:      1, // always due, until the first sync marks it healthy
-			StalenessBudgetNS:   3600,
+			SyncInterval:        1, // always due, until the first sync marks it healthy
+			StalenessBudget:     3600,
 			ChainHeadHash:       make([]byte, 32),
 			CreatedAtNS:         clk.NowNS(),
 			UpdatedAtNS:         clk.NowNS(),
@@ -278,8 +278,8 @@ func TestScheduler_ConcurrencyBounded(t *testing.T) {
 		ran:   make(map[model.RemoteID]struct{}),
 		hold:  5 * time.Millisecond,
 	}
-	const tickNS = 1_000_000 // 1ms — poll fast
-	sched := tlsync.NewScheduler(s, cs, clk, newLogger(), tickNS, maxConcurrency)
+	const tick = time.Millisecond // poll fast
+	sched := tlsync.NewScheduler(s, cs, clk, newLogger(), tick, maxConcurrency)
 
 	schedCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})

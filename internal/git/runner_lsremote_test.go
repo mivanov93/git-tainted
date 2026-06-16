@@ -3,6 +3,7 @@ package git_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/mivanov93/git-tainted/internal/git"
 	"github.com/mivanov93/git-tainted/internal/model"
@@ -19,7 +20,7 @@ func TestExecGitRunner_LsRemote_Fixture(t *testing.T) {
 	annOID := b.AnnotatedTag("v2.0", "c2", "release 2.0", base+2)
 
 	// Use http-allowlist runner so the loopback fixture server is reachable.
-	runner := git.NewRunnerWithProtocols("git", 30_000_000_000, "http:https:ssh")
+	runner := git.NewRunnerWithProtocols("git", 30*time.Second, "http:https:ssh")
 	refs, err := runner.LsRemote(context.Background(), srv.URL("repo.git"), nil)
 	if err != nil {
 		t.Fatalf("LsRemote err = %v", err)

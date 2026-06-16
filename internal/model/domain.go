@@ -1,8 +1,12 @@
 // Package model domain.go — the domain structs that mirror §9 columns and
 // the API surface. All timestamps are int64 unix-nanoseconds (field suffix NS).
-// All oids are raw bytes wrapped in OID. Pointers are used for genuinely optional
-// fields (nullable columns, detected-on-first-sync values).
+// Durations are time.Duration (the int64-ns wire/DB representation is translated
+// at the store and API boundaries). All oids are raw bytes wrapped in OID.
+// Pointers are used for genuinely optional fields (nullable columns,
+// detected-on-first-sync values).
 package model
+
+import "time"
 
 // RemoteStatus is the last-known health/lifecycle status of a remote.
 type RemoteStatus string
@@ -19,8 +23,8 @@ type Remote struct {
 	URL                 string
 	NormalizedURL       string
 	Transport           Transport
-	SyncIntervalNS      int64
-	StalenessBudgetNS   int64
+	SyncInterval        time.Duration
+	StalenessBudget     time.Duration
 	TaintAnyTagDeletion bool // default true
 	HashAlgo            *HashAlgo
 	Status              RemoteStatus

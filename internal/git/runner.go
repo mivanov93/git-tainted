@@ -13,8 +13,8 @@ import (
 // Config configures the hardened git runner (used by NewExecGitRunner).
 type Config struct {
 	GitBin string
-	// TimeoutNS is the per-call deadline in nanoseconds; 0 = no deadline.
-	TimeoutNS int64
+	// Timeout is the per-call deadline; 0 = no deadline.
+	Timeout time.Duration
 	// ProtocolAllow overrides GIT_ALLOW_PROTOCOL. Empty = production default "https:ssh".
 	// Pass "http:https:ssh" for the loopback fixture server in tests.
 	ProtocolAllow string
@@ -23,7 +23,7 @@ type Config struct {
 // execGitRunner is the hardened model.GitRunner over the system git binary.
 type execGitRunner struct {
 	gitBin        string
-	timeoutNS     int64
+	timeout       time.Duration
 	allowProtocol string
 }
 
@@ -34,7 +34,7 @@ func NewExecGitRunner(cfg Config) model.GitRunner {
 	}
 	return &execGitRunner{
 		gitBin:        cfg.GitBin,
-		timeoutNS:     cfg.TimeoutNS,
+		timeout:       cfg.Timeout,
 		allowProtocol: cfg.ProtocolAllow,
 	}
 }
@@ -42,11 +42,11 @@ func NewExecGitRunner(cfg Config) model.GitRunner {
 // NewRunnerWithProtocols is like NewExecGitRunner but allows overriding the protocol
 // allowlist for test fixture servers that serve over plain HTTP.
 // Production code must never call this with allowProtocol != "https:ssh".
-func NewRunnerWithProtocols(gitBin string, timeoutNS int64, allowProtocol string) model.GitRunner {
+func NewRunnerWithProtocols(gitBin string, timeout time.Duration, allowProtocol string) model.GitRunner {
 	if gitBin == "" {
 		gitBin = "git"
 	}
-	return &execGitRunner{gitBin: gitBin, timeoutNS: timeoutNS, allowProtocol: allowProtocol}
+	return &execGitRunner{gitBin: gitBin, timeout: timeout, allowProtocol: allowProtocol}
 }
 
 // hardenedArgv builds the global-hardening argv prefix (§5) followed by the
@@ -99,9 +99,9 @@ func hardenedEnvWithProtocol(auth *model.MaterializedAuth, allowProtocol string)
 
 // run execs git with the hardened argv+env under a timeout-bounded context.
 func (r *execGitRunner) run(ctx context.Context, auth *model.MaterializedAuth, dir string, argv []string) ([]byte, error) {
-	if r.timeoutNS > 0 {
+	if r.timeout > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(r.timeoutNS))
+		ctx, cancel = context.WithTimeout(ctx, r.timeout)
 		defer cancel()
 	}
 	cmd := exec.CommandContext(ctx, r.gitBin, argv...) //nolint:gosec // gitBin is a controlled path, not user input
@@ -134,5 +134,3 @@ func (r *execGitRunner) LsRemote(ctx context.Context, rawURL string, auth *model
 	}
 	return ParseLsRemote(out, algo)
 }
-
-

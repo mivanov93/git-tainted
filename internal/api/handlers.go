@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/mivanov93/git-tainted/internal/api/oapi"
 	"github.com/mivanov93/git-tainted/internal/auth"
@@ -101,13 +102,13 @@ func (s *StrictServerImpl) CreateRemote(ctx context.Context, req oapi.CreateRemo
 		return oapi.CreateRemote422JSONResponse(oapi.Error{Error: "transport must be https or ssh"}), nil
 	}
 
-	var syncInterval int64 = 300_000_000_000 // 5 minutes default
+	syncInterval := 5 * time.Minute
 	if body.SyncIntervalNs != nil && *body.SyncIntervalNs > 0 {
-		syncInterval = *body.SyncIntervalNs
+		syncInterval = time.Duration(*body.SyncIntervalNs)
 	}
-	var stalenessBudget int64 = 3_600_000_000_000 // 1 hour default
+	stalenessBudget := time.Hour
 	if body.StalenessBudgetNs != nil && *body.StalenessBudgetNs > 0 {
-		stalenessBudget = *body.StalenessBudgetNs
+		stalenessBudget = time.Duration(*body.StalenessBudgetNs)
 	}
 	taintAnyDeletion := true
 	if body.TaintAnyTagDeletion != nil {
@@ -119,8 +120,8 @@ func (s *StrictServerImpl) CreateRemote(ctx context.Context, req oapi.CreateRemo
 		URL:                 body.Url,
 		NormalizedURL:       normURL,
 		Transport:           transport,
-		SyncIntervalNS:      syncInterval,
-		StalenessBudgetNS:   stalenessBudget,
+		SyncInterval:        syncInterval,
+		StalenessBudget:     stalenessBudget,
 		TaintAnyTagDeletion: taintAnyDeletion,
 		Status:              model.RemoteActive,
 		ChainHeadHash:       make([]byte, 32), // genesis: 32 zero bytes
@@ -168,10 +169,10 @@ func (s *StrictServerImpl) UpdateRemote(ctx context.Context, req oapi.UpdateRemo
 		return oapi.UpdateRemote200JSONResponse(remoteToOAPI(*r)), nil
 	}
 	if body.SyncIntervalNs != nil && *body.SyncIntervalNs > 0 {
-		r.SyncIntervalNS = *body.SyncIntervalNs
+		r.SyncInterval = time.Duration(*body.SyncIntervalNs)
 	}
 	if body.StalenessBudgetNs != nil && *body.StalenessBudgetNs > 0 {
-		r.StalenessBudgetNS = *body.StalenessBudgetNs
+		r.StalenessBudget = time.Duration(*body.StalenessBudgetNs)
 	}
 	if body.TaintAnyTagDeletion != nil {
 		r.TaintAnyTagDeletion = *body.TaintAnyTagDeletion
@@ -508,9 +509,9 @@ func (s *StrictServerImpl) Verify(ctx context.Context, req oapi.VerifyRequestObj
 	if remote.ConsecutiveFailures > 0 {
 		syncOutcome = oapi.VerifyResponseSyncOutcomeFailed
 	}
-	if remote.StalenessBudgetNS > 0 && remote.LastOkNS > 0 {
-		age := s.clock.NowNS() - remote.LastOkNS
-		if age > remote.StalenessBudgetNS || remote.ConsecutiveFailures > 0 {
+	if remote.StalenessBudget > 0 && remote.LastOkNS > 0 {
+		age := s.clock.NowNS() - remote.LastOkNS // int64-ns span between two timestamps
+		if age > int64(remote.StalenessBudget) || remote.ConsecutiveFailures > 0 {
 			confidence = oapi.Stale
 		}
 	} else if remote.LastOkNS == 0 {
@@ -618,8 +619,8 @@ func remoteToOAPI(r model.Remote) oapi.Remote {
 		Url:                 r.URL,
 		NormalizedUrl:       r.NormalizedURL,
 		Transport:           oapi.RemoteTransport(r.Transport),
-		SyncIntervalNs:      r.SyncIntervalNS,
-		StalenessBudgetNs:   r.StalenessBudgetNS,
+		SyncIntervalNs:      int64(r.SyncInterval),
+		StalenessBudgetNs:   int64(r.StalenessBudget),
 		TaintAnyTagDeletion: r.TaintAnyTagDeletion,
 		Status:              oapi.RemoteStatus(r.Status),
 		LastOkNs:            r.LastOkNS,

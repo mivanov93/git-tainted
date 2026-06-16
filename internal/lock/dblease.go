@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/mivanov93/git-tainted/internal/model"
 )
@@ -22,12 +23,12 @@ func NewDBLease(s model.LeaseStore, clk model.Clock) model.Lock {
 	return &dbLease{s: s, clk: clk}
 }
 
-// AcquireRemoteLease wins an exclusive lease for remoteID. ttlNS is the
-// lease duration in nanoseconds. Returns ErrLeaseHeld when a live lease
-// already exists for a different holder.
-func (d *dbLease) AcquireRemoteLease(ctx context.Context, remoteID model.RemoteID, holder string, ttlNS int64) (*model.Lease, error) {
-	now := d.clk.NowNS()
-	expires := now + ttlNS
+// AcquireRemoteLease wins an exclusive lease for remoteID. ttl is the
+// lease duration. Returns ErrLeaseHeld when a live lease already exists for a
+// different holder.
+func (d *dbLease) AcquireRemoteLease(ctx context.Context, remoteID model.RemoteID, holder string, ttl time.Duration) (*model.Lease, error) {
+	now := d.clk.NowNS() // TIMESTAMP (unix-ns); the lease is bounded by adding the ttl span
+	expires := now + int64(ttl)
 	ok, head, err := d.s.TryAcquireLease(ctx, remoteID, holder, now, expires)
 	if err != nil {
 		return nil, fmt.Errorf("acquire lease: %w", err)
