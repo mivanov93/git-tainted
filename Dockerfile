@@ -14,7 +14,7 @@ FROM alpine:3.22
 RUN apk add --no-cache git ca-certificates openssh-client && adduser -D -u 10001 gt
 USER gt
 COPY --from=build /out/git-taintedd /usr/local/bin/git-taintedd
-COPY db/migrations /app/db/migrations
+# Migrations are embedded in the binary (see db/embed.go) — no db/ folder needed.
 COPY spec/openapi.yaml /app/spec/openapi.yaml
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/git-taintedd"]

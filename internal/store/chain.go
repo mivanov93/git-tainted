@@ -7,8 +7,8 @@ import (
 	"github.com/mivanov93/git-tainted/internal/model"
 )
 
-// chainHashLen is the SHA-256 digest size; genesis prev_hash is this many zero bytes.
-const chainHashLen = 32
+// ChainHashLen is the SHA-256 digest size; genesis prev_hash is this many zero bytes.
+const ChainHashLen = 32
 
 // writeField appends a length-prefixed field: uint64(len) big-endian ‖ bytes.
 // Length-prefixing makes the field concatenation injective so distinct field
