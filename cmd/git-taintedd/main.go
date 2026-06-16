@@ -23,6 +23,7 @@ import (
 	"github.com/mivanov93/git-tainted/internal/git"
 	"github.com/mivanov93/git-tainted/internal/lock"
 	"github.com/mivanov93/git-tainted/internal/model"
+	"github.com/mivanov93/git-tainted/internal/store/cache"
 	"github.com/mivanov93/git-tainted/internal/store/mysql"
 	"github.com/mivanov93/git-tainted/internal/store/sqlite"
 	tlsync "github.com/mivanov93/git-tainted/internal/sync"
@@ -113,6 +114,18 @@ Environment variables (all GT_*):
   GT_PPROF_ENABLED             Expose /debug/pprof/* on the API listener (default: false).
                                Set to true only in controlled environments.
 
+  Cache (verify hot path)
+  -----------------------
+  Otter caching Store decorator on the verify read path, invalidated by
+  per-remote generation counters bumped strictly after each write commits.
+  Disabling it returns the bare store (zero overhead, identical behavior).
+
+  GT_CACHE_ENABLED             Enable the verify-path cache             (default: true)
+  GT_CACHE_MAX_ENTRIES         Max entries per logical Otter cache      (default: 100000)
+  GT_CACHE_TTL_NS              Staleness backstop in ns; independent of
+                               the immediate generation invalidation.
+                               0 disables the TTL.                       (default: 60000000000 = 60 s)
+
   Auth (control endpoints only)
   -----------------------------
   Gates ONLY the five mutating control operations (create/update/delete remote,
@@ -179,9 +192,24 @@ func run() error {
 		log.Info("store ready", "driver", "sqlite", "path", cfg.SQLitePath)
 	}
 
+	// ---- Verify hot-path cache (spec §4) --------------------------------------
+	// Wrap the store ONCE here, right after Open, with the Otter caching decorator
+	// (per-remote generation invalidation, bump-after-commit). Everything below —
+	// the lease, the syncer (its WRITES must invalidate the SAME cache the verify
+	// READS hit), the API server, the ops handler, and the scheduler — flows through
+	// `cached`. When GT_CACHE_ENABLED=false, Wrap returns `st` unchanged (zero
+	// overhead). The raw `st.Close()` is already deferred above; the decorator's
+	// Close is promoted to the inner store, so no extra close wiring is needed.
+	cached := cache.Wrap(st, cache.Config{
+		Enabled:    cfg.CacheEnabled,
+		MaxEntries: cfg.CacheMaxEntries,
+		TTLNS:      cfg.CacheTTLNS,
+	})
+	log.Info("cache ready", "enabled", cfg.CacheEnabled, "max_entries", cfg.CacheMaxEntries, "ttl_ns", cfg.CacheTTLNS)
+
 	// ---- Seams ----------------------------------------------------------------
 	clk := wallClock{}
-	lk := lock.NewDBLease(st, clk)
+	lk := lock.NewDBLease(cached, clk)
 	gitRunner := git.NewExecGitRunner(git.Config{
 		GitBin:        cfg.GitBin,
 		TimeoutNS:     cfg.GitTimeoutNS,
@@ -189,7 +217,7 @@ func run() error {
 	})
 	// holder identifies this process in the lease table.
 	holder := fmt.Sprintf("git-taintedd-%d", os.Getpid())
-	syncer := tlsync.NewRemoteSyncer(st, gitRunner, lk, clk, holder)
+	syncer := tlsync.NewRemoteSyncer(cached, gitRunner, lk, clk, holder)
 
 	// ---- Auth -----------------------------------------------------------------
 	// Build the control-plane authenticator from config (default mode=none =
@@ -207,9 +235,9 @@ func run() error {
 	log.Info("auth ready", "mode", cfg.AuthMode)
 
 	// ---- HTTP handler ---------------------------------------------------------
-	apiHandler := api.NewServer(st, clk, syncer, authn, log)
+	apiHandler := api.NewServer(cached, clk, syncer, authn, log)
 	// OpsHandler mounts /healthz, /readyz, and conditionally /debug/pprof/*.
-	opsHandler := api.OpsHandler(st, cfg.PprofEnabled)
+	opsHandler := api.OpsHandler(cached, cfg.PprofEnabled)
 
 	// Mount ops routes alongside the API routes. API routes are all under /v1/.
 	// /metrics is served on the dedicated metrics listener only (when configured).
@@ -266,7 +294,7 @@ func run() error {
 	defer stop()
 
 	// ---- Scheduler ------------------------------------------------------------
-	sched := tlsync.NewScheduler(st, syncer, clk, log, cfg.SchedulerTickNS, cfg.SyncConcurrency)
+	sched := tlsync.NewScheduler(cached, syncer, clk, log, cfg.SchedulerTickNS, cfg.SyncConcurrency)
 
 	schedCtx, schedCancel := context.WithCancel(context.Background())
 	schedDone := make(chan struct{})
