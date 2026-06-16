@@ -52,6 +52,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mivanov93/git-tainted/internal/buildinfo"
 	"github.com/mivanov93/git-tainted/internal/git"
 )
 
@@ -63,9 +64,9 @@ func main() {
 // Defined here so the CLI does not import internal/api/oapi (which pulls in
 // heavy generated deps).
 type verifyResponse struct {
-	Status     string  `json:"status"`
-	Confidence string  `json:"confidence"`
-	Tag        string  `json:"tag"`
+	Status     string `json:"status"`
+	Confidence string `json:"confidence"`
+	Tag        string `json:"tag"`
 	Remote     *struct {
 		ID            *int64  `json:"id,omitempty"`
 		NormalizedURL *string `json:"normalized_url,omitempty"`
@@ -188,6 +189,8 @@ Flags:
   --json                      Emit machine-readable JSON verdict to stdout
   --strict                    Exit 10 instead of 0 when verdict is ok but confidence=stale
   --insecure                  Allow plaintext http:// servers to non-loopback hosts (env: GT_INSECURE)
+  --version, -v               Print version and exit
+  --help, -h                  Print this help and exit
 
 Exit codes:
   0   ok (authoritative), or ok (stale) without --strict
@@ -220,6 +223,7 @@ Limitations (§15):
 		jsonFlag           bool
 		strictFlag         bool
 		insecureFlag       bool
+		versionFlag        bool
 	)
 	fs.Var(&serverFlags, "server", "Server base URL (repeatable)")
 	fs.StringVar(&modeFlag, "mode", "", "Consolidation mode: quorum|unanimous|any-bad|first (default: quorum)")
@@ -231,12 +235,18 @@ Limitations (§15):
 	fs.BoolVar(&jsonFlag, "json", false, "Emit machine-readable JSON verdict to stdout")
 	fs.BoolVar(&strictFlag, "strict", false, "Exit 10 instead of 0 for stale-ok")
 	fs.BoolVar(&insecureFlag, "insecure", false, "Allow plaintext http:// servers to non-loopback hosts (env: GT_INSECURE)")
+	fs.BoolVar(&versionFlag, "version", false, "Print version and exit")
+	fs.BoolVar(&versionFlag, "v", false, "Print version and exit (shorthand)")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
 		return 2
+	}
+	if versionFlag {
+		_, _ = fmt.Fprintf(stdout, "git-tainted %s\n", buildinfo.String())
+		return 0
 	}
 	if fs.NArg() > 0 {
 		diagf(stderr, "error: unexpected argument %q\n", fs.Arg(0))
@@ -780,13 +790,13 @@ func emitMultiHuman(con Consolidated, results []ServerResult, mode Mode, strict 
 
 // multiJSONOutput is the --json shape for multi-server.
 type multiJSONOutput struct {
-	Mode               Mode                 `json:"mode"`
-	FreshnessWindowNS  int64                `json:"freshness_window_ns"`
-	FinalStatus        string               `json:"final_status"`
-	ExitCode           int                  `json:"exit_code"`
-	Reason             string               `json:"reason"`
-	Servers            []serverJSONEntry    `json:"servers"`
-	Dissent            []serverJSONEntry    `json:"dissent,omitempty"`
+	Mode              Mode              `json:"mode"`
+	FreshnessWindowNS int64             `json:"freshness_window_ns"`
+	FinalStatus       string            `json:"final_status"`
+	ExitCode          int               `json:"exit_code"`
+	Reason            string            `json:"reason"`
+	Servers           []serverJSONEntry `json:"servers"`
+	Dissent           []serverJSONEntry `json:"dissent,omitempty"`
 }
 
 type serverJSONEntry struct {

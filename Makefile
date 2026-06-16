@@ -21,9 +21,14 @@ test:            ; $(GO) test $(PKG)
 race:            ; $(GO) test -race -count=1 $(PKG)
 cover:           ; $(GO) test -coverprofile=cover.out $(PKG) && $(GO) tool cover -func=cover.out
 
-build: build-server build-cli   ## build both binaries
-build-server:    ; CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-s -w" -o bin/git-taintedd ./cmd/git-taintedd
-build-cli:       ; CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-s -w" -o bin/git-tainted ./cmd/git-tainted
+# Version is stamped from git: a tag (v0.1.0), commits-past-tag (v0.1.0-3-gabc1234),
+# -dirty for a modified tree, or the bare commit when no tag exists (nightly).
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS := -s -w -X github.com/mivanov93/git-tainted/internal/buildinfo.Version=$(VERSION)
+
+build: build-server build-cli   ## build both binaries (version stamped from git describe)
+build-server:    ; CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/git-taintedd ./cmd/git-taintedd
+build-cli:       ; CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/git-tainted ./cmd/git-tainted
 
 docker:          ; $(DOCKER) build -t git-tainted:dev .
 up-local:        ; $(DOCKER) compose -f docker-compose.local.yml up --build -d
