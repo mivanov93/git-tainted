@@ -13,12 +13,13 @@ tag **tainted** the moment its oid changes.
 
 > "For remote R, is tag T still at the commit I have, and has it ever been moved?"
 
-## Two binaries
+## Three binaries
 
 | Binary | Purpose |
 |--------|---------|
 | `git-taintedd` | Server — polls remotes, maintains the tamper-evident ledger, serves the API |
-| `git-tainted` | CLI — run inside a working repo; exits with a meaningful code |
+| `git-tainted` | Verify CLI — run inside a working repo; exits with a meaningful code |
+| `git-tainted-ctl` | Admin CLI — register / configure remotes, trigger syncs, manage taint events; authenticates to the [control endpoints](#authentication) |
 
 `git-tainted` is named so that `git tainted` works as a git subcommand when it is on
 your `PATH`.
@@ -26,12 +27,15 @@ your `PATH`.
 ## Install
 
 ```sh
-# CLI — becomes `git tainted` once on your PATH
+# Verify CLI — becomes `git tainted` once on your PATH
 go install github.com/mivanov93/git-tainted/cmd/git-tainted@latest
+
+# Admin CLI — register/configure remotes, trigger syncs, ack taints
+go install github.com/mivanov93/git-tainted/cmd/git-tainted-ctl@latest
 
 # Server
 go install github.com/mivanov93/git-tainted/cmd/git-taintedd@latest
-# or from a clone:  make build   →   bin/git-taintedd, bin/git-tainted
+# or from a clone:  make build   →   bin/git-taintedd, bin/git-tainted, bin/git-tainted-ctl
 ```
 
 ## Quick start
@@ -211,19 +215,70 @@ OpenAPI 3.1 (`spec/openapi.yaml`). Remote-scoped, tags-only:
 - `GET /v1/remotes/{id}/tags` · `GET /v1/remotes/{id}/tags/{name}` — tag projections (glob + RE2 search)
 - `GET /v1/remotes/{id}/taint-events` · `POST /v1/remotes/{id}/taint-events/{eid}/ack` — taint log + acknowledge
 - `GET /v1/verify?remote=<url|id>&tag=<name>&commit=<oid>` — the verdict (+ `ledger_proof`)
-- `GET /healthz` · `/readyz` · `/metrics` · `/debug/pprof`
+- `GET /healthz` · `/readyz` — always on; `/metrics` on a **dedicated** listener when `GT_METRICS_ADDR` is set; `/debug/pprof` only when `GT_PPROF_ENABLED=true`
 
-There is **no app-level auth** — bind to loopback and front it with your own edge / proxy.
-The server speaks both **HTTP/1.1 and unencrypted HTTP/2 (h2c)** on its cleartext port,
-so an h2c-capable proxy can multiplex to it without TLS on the proxy↔server hop.
+The five **mutating** endpoints (create / update / delete a remote, trigger a sync,
+ack a taint event) can be gated by optional **[authentication](#authentication)** —
+`apikey`, `basic`, or `jwks`. Reads (verify, tags, syncs, taint-events) and the health
+probes are **never** gated. By default (`GT_AUTH_MODE=none`) there is no app-level
+auth — bind to loopback and front it with your own edge / proxy. The server speaks
+both **HTTP/1.1 and unencrypted HTTP/2 (h2c)** on its cleartext port, so an h2c-capable
+proxy can multiplex to it without TLS on the proxy↔server hop.
+
+## Authentication
+
+By default (`GT_AUTH_MODE=none`) the server has **no app-level auth** — it binds
+loopback and trusts an edge proxy. Authentication is **opt-in** and gates only the
+five **mutating** control endpoints: creating, updating, or deleting a remote,
+triggering a sync, and acknowledging a taint event. Every **read** (verify, tags,
+syncs, taint-events) and the health probes are **never** gated — open verification is
+the whole point.
+
+| `GT_AUTH_MODE` | Server credentials | Client sends |
+|----------------|--------------------|--------------|
+| `none` (default) | — | nothing |
+| `apikey` | `GT_API_KEYS` (comma-separated raw keys, SHA-256-hashed at load) and/or `GT_API_KEYS_SHA256` (pre-hashed digests) | `Authorization: Bearer <key>` or `X-API-Key: <key>` |
+| `basic` | `GT_BASIC_AUTH` = `user:<bcrypt-hash>[,…]` (htpasswd-style; no plaintext passwords at rest) | HTTP Basic |
+| `jwks` | `GT_JWKS_URL` + `GT_JWT_ISSUER` + `GT_JWT_AUDIENCE` (+ `GT_JWT_ALGS`, default `RS256,ES256`) | `Authorization: Bearer <jwt>` |
+
+A missing or invalid credential on a control endpoint returns `401` +
+`WWW-Authenticate` before any handler runs. Keys are compared in constant time; basic
+passwords are bcrypt-verified; JWTs are verified against a background-refreshed JWKS
+(asymmetric algorithms only — `none` and HS\* are rejected) with issuer / audience /
+expiry checks, and **fail closed** if the JWKS endpoint is unreachable.
+
+Drive a protected server with the **`git-tainted-ctl`** admin CLI — it sends whichever
+credential you give it, and reads need none:
+
+```sh
+# server with API-key auth on the control plane:
+GT_AUTH_MODE=apikey GT_API_KEYS=s3cret GT_SQLITE_PATH=./git-tainted.db git-taintedd &
+
+# register a remote — a control endpoint, so the key is required:
+git-tainted-ctl --server http://localhost:8080 --api-key s3cret \
+  remote add https://github.com/spf13/pflag
+
+# list remotes — a read, so no key needed:
+git-tainted-ctl --server http://localhost:8080 remote list
+```
+
+`git-tainted-ctl` also reads `GT_CTL_SERVER` and `GT_API_KEY` / `GT_TOKEN` (a JWT) /
+`GT_BASIC_AUTH` from the environment.
 
 ## Configuration
 
-Environment, prefix `GT_` (see `.env.example`): `GT_SQLITE_PATH`, `GT_LISTEN_ADDR`
-(default `127.0.0.1:8080`), `GT_SYNC_DEFAULT_INTERVAL_NS`, `GT_SCHEDULER_TICK_NS`,
-`GT_STALENESS_BUDGET_NS`, `GT_PROTOCOL_ALLOWLIST` (`https:ssh`), `GT_GIT_BIN`,
-`GT_GIT_TIMEOUT_NS`, `GT_METRICS_ADDR`. CLI: `GT_SERVER`. All timestamps are int64
+Environment, prefix `GT_` (see `.env.example`). All timestamps are int64
 unix-nanoseconds.
+
+- **Storage** — `GT_DB_DRIVER` (`sqlite` default, or `mysql`), `GT_SQLITE_PATH`, `GT_MYSQL_DSN`
+- **Server** — `GT_LISTEN_ADDR` (default `127.0.0.1:8080`)
+- **Sync** — `GT_SYNC_CONCURRENCY`, `GT_SYNC_DEFAULT_INTERVAL_NS`, `GT_SCHEDULER_TICK_NS`, `GT_STALENESS_BUDGET_NS`
+- **Git runner** — `GT_GIT_BIN`, `GT_GIT_TIMEOUT_NS`, `GT_PROTOCOL_ALLOWLIST` (`https:ssh`), `GT_HOST_ALLOWLIST`
+- **Verify cache** — `GT_CACHE_ENABLED` (default `true`), `GT_CACHE_MAX_ENTRIES`, `GT_CACHE_TTL_NS`
+- **Observability** — `GT_LOG_LEVEL`, `GT_METRICS_ADDR` (empty = off; set e.g. `0.0.0.0:9090` for a dedicated `/metrics` listener), `GT_PPROF_ENABLED` (default `false`)
+- **Auth** — `GT_AUTH_MODE` + the per-mode credentials in [Authentication](#authentication)
+
+Clients: `GT_SERVER` / `GT_SERVERS` (verify CLI); `GT_CTL_SERVER` + `GT_API_KEY` / `GT_TOKEN` / `GT_BASIC_AUTH` (admin CLI).
 
 ### MySQL backend
 
@@ -271,7 +326,9 @@ make build      # both static CGO-free binaries → bin/
 make e2e        # full register → sync → verify → tamper flow over a local git server
 ```
 
-Design: [`docs/superpowers/specs/2026-06-14-git-tainted-design.md`](docs/superpowers/specs/2026-06-14-git-tainted-design.md).
+Design: [`2026-06-14-git-tainted-design.md`](docs/superpowers/specs/2026-06-14-git-tainted-design.md)
+(core) and [`2026-06-16-git-tainted-control-plane-design.md`](docs/superpowers/specs/2026-06-16-git-tainted-control-plane-design.md)
+(authentication, admin CLI, verify cache).
 
 ## License
 
