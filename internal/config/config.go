@@ -43,6 +43,16 @@ type Config struct {
 	MetricsAddr  string
 	PprofEnabled bool
 
+	// ---- Verify hot-path cache (control-plane design spec §4) --------------
+	// CacheEnabled turns on the Otter caching Store decorator (default true).
+	// When false, cache.Wrap returns the inner store unchanged (zero overhead).
+	CacheEnabled bool
+	// CacheMaxEntries bounds each logical Otter cache (size-based eviction).
+	CacheMaxEntries int
+	// CacheTTLNS is the staleness backstop in unix-ns, independent of the
+	// (immediate) per-remote generation invalidation. 0 disables TTL expiry.
+	CacheTTLNS int64
+
 	// ---- Control-plane auth (design spec §2) -------------------------------
 	// AuthMode selects how the five mutating control endpoints are gated:
 	// none (default) | apikey | basic | jwks. Reads/health are never gated.
@@ -121,6 +131,9 @@ func Load(get Lookup) (*Config, error) {
 		MetricsAddr:  str("GT_METRICS_ADDR", ""),
 		PprofEnabled: boolean("GT_PPROF_ENABLED", false),
 
+		// Verify hot-path cache (default ON — spec §4.6).
+		CacheEnabled: boolean("GT_CACHE_ENABLED", true),
+
 		// Control-plane auth (default mode none = today's behavior).
 		AuthMode:      str("GT_AUTH_MODE", AuthModeNone),
 		APIKeys:       str("GT_API_KEYS", ""),
@@ -146,6 +159,12 @@ func Load(get Lookup) (*Config, error) {
 		return nil, err
 	}
 	if c.GitTimeoutNS, err = i64("GT_GIT_TIMEOUT_NS", 60_000_000_000); err != nil {
+		return nil, err
+	}
+	if c.CacheMaxEntries, err = iInt("GT_CACHE_MAX_ENTRIES", 100_000); err != nil {
+		return nil, err
+	}
+	if c.CacheTTLNS, err = i64("GT_CACHE_TTL_NS", 60_000_000_000); err != nil {
 		return nil, err
 	}
 
@@ -182,6 +201,12 @@ func (c *Config) validate() error {
 	}
 	if c.StalenessBudgetNS <= 0 {
 		return fmt.Errorf("%w: GT_STALENESS_BUDGET_NS=%d must be > 0", ErrConfig, c.StalenessBudgetNS)
+	}
+	if c.CacheMaxEntries <= 0 {
+		return fmt.Errorf("%w: GT_CACHE_MAX_ENTRIES=%d must be > 0", ErrConfig, c.CacheMaxEntries)
+	}
+	if c.CacheTTLNS < 0 {
+		return fmt.Errorf("%w: GT_CACHE_TTL_NS=%d must be >= 0 (0 disables the TTL backstop)", ErrConfig, c.CacheTTLNS)
 	}
 	switch c.AuthMode {
 	case AuthModeNone, AuthModeAPIKey, AuthModeBasic, AuthModeJWKS:

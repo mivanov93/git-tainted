@@ -59,6 +59,16 @@ func TestLoad(t *testing.T) {
 				if c.PprofEnabled {
 					t.Errorf("PprofEnabled = true, want false (disabled by default)")
 				}
+				// Verify hot-path cache is ON by default with the §4.6 defaults.
+				if !c.CacheEnabled {
+					t.Errorf("CacheEnabled = false, want true (cache on by default)")
+				}
+				if c.CacheMaxEntries != 100_000 {
+					t.Errorf("CacheMaxEntries = %d, want 100000", c.CacheMaxEntries)
+				}
+				if c.CacheTTLNS != 60_000_000_000 {
+					t.Errorf("CacheTTLNS = %d, want 60e9", c.CacheTTLNS)
+				}
 			},
 		},
 		{
@@ -77,6 +87,9 @@ func TestLoad(t *testing.T) {
 				"GT_HOST_ALLOWLIST":           "github.com,gitlab.com",
 				"GT_LOG_LEVEL":                "debug",
 				"GT_METRICS_ADDR":             "0.0.0.0:9090",
+				"GT_CACHE_ENABLED":            "false",
+				"GT_CACHE_MAX_ENTRIES":        "5000",
+				"GT_CACHE_TTL_NS":             "0",
 			},
 			want: func(t *testing.T, c *Config) {
 				if c.SyncConcurrency != 8 {
@@ -87,6 +100,16 @@ func TestLoad(t *testing.T) {
 				}
 				if c.StalenessBudgetNS != 7200000000000 {
 					t.Errorf("StalenessBudgetNS = %d, want 7200e9", c.StalenessBudgetNS)
+				}
+				if c.CacheEnabled {
+					t.Errorf("CacheEnabled = true, want false (GT_CACHE_ENABLED=false)")
+				}
+				if c.CacheMaxEntries != 5000 {
+					t.Errorf("CacheMaxEntries = %d, want 5000", c.CacheMaxEntries)
+				}
+				// TTL=0 is a valid override (disables the TTL backstop).
+				if c.CacheTTLNS != 0 {
+					t.Errorf("CacheTTLNS = %d, want 0", c.CacheTTLNS)
 				}
 			},
 		},

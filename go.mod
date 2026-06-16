@@ -13,6 +13,7 @@ require (
 	github.com/go-sql-driver/mysql v1.10.0
 	github.com/lestrrat-go/httprc/v3 v3.0.5
 	github.com/lestrrat-go/jwx/v3 v3.1.1
+	github.com/maypok86/otter/v2 v2.3.0
 	github.com/oapi-codegen/runtime v1.4.1
 	github.com/prometheus/client_golang v1.12.1
 	github.com/testcontainers/testcontainers-go/modules/mysql v0.42.0
