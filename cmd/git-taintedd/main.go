@@ -44,23 +44,42 @@ func run() error {
 	log := config.NewLogger(os.Stdout, cfg.LogLevel)
 
 	// ---- Store ----------------------------------------------------------------
-	migrDir, err := findMigrationsDir()
-	if err != nil {
-		log.Error("cannot locate migrations dir", "err", err)
-		return err
+	// Two model.Store implementations behind one seam (owner's two-impls pattern):
+	// sqlite (default) and mysql. Each has its own migrations dir + migrate path.
+	var st model.Store
+	switch cfg.DBDriver {
+	case "mysql":
+		migrDir, derr := findMigrationsDirNamed("db/migrations-mysql")
+		if derr != nil {
+			log.Error("cannot locate mysql migrations dir", "err", derr)
+			return derr
+		}
+		// OpenMySQL pings, runs the MySQL migrations, and returns a ready store.
+		st, err = store.OpenMySQL(cfg.MySQLDSN, migrDir)
+		if err != nil {
+			log.Error("store.OpenMySQL failed", "err", err)
+			return err
+		}
+		defer func() { _ = st.Close() }()
+		log.Info("store ready", "driver", "mysql")
+	default: // "sqlite" (validated in config)
+		migrDir, derr := findMigrationsDirNamed("db/migrations")
+		if derr != nil {
+			log.Error("cannot locate migrations dir", "err", derr)
+			return derr
+		}
+		st, err = store.Open(cfg.SQLitePath, migrDir)
+		if err != nil {
+			log.Error("store.Open failed", "path", cfg.SQLitePath, "err", err)
+			return err
+		}
+		defer func() { _ = st.Close() }()
+		if err := st.Migrate(context.Background()); err != nil {
+			log.Error("migration failed", "err", err)
+			return err
+		}
+		log.Info("store ready", "driver", "sqlite", "path", cfg.SQLitePath)
 	}
-	st, err := store.Open(cfg.SQLitePath, migrDir)
-	if err != nil {
-		log.Error("store.Open failed", "path", cfg.SQLitePath, "err", err)
-		return err
-	}
-	defer func() { _ = st.Close() }()
-
-	if err := st.Migrate(context.Background()); err != nil {
-		log.Error("migration failed", "err", err)
-		return err
-	}
-	log.Info("store ready", "path", cfg.SQLitePath)
 
 	// ---- Seams ----------------------------------------------------------------
 	clk := wallClock{}
@@ -160,42 +179,34 @@ func run() error {
 	}
 }
 
-// findMigrationsDir locates db/migrations relative to the binary's executable
-// path, falling back to a path relative to the current directory.
-// In production the binary is shipped alongside the db/ tree; in test/dev the
-// current-directory fallback covers `go run ./cmd/git-taintedd`.
-func findMigrationsDir() (string, error) {
+// findMigrationsDirNamed locates a migrations directory (e.g. "db/migrations"
+// or "db/migrations-mysql") relative to the binary's executable path, falling
+// back to a path relative to the current directory. In production the binary is
+// shipped alongside the db/ tree; in test/dev the current-directory fallback
+// covers `go run ./cmd/git-taintedd`. GT_MIGRATIONS_DIR overrides the path for
+// the active driver (useful in containers).
+func findMigrationsDirNamed(name string) (string, error) {
 	// Prefer an env override (useful in containers where the binary is at /usr/bin
-	// but migrations are at /app/db/migrations, etc.).
+	// but migrations live at a different absolute path).
 	if v := os.Getenv("GT_MIGRATIONS_DIR"); v != "" {
 		return v, nil
 	}
 
 	// Try relative to the current working directory (go run / dev).
-	candidates := []string{
-		"db/migrations",
-	}
-	for _, c := range candidates {
-		if _, err := os.Stat(c); err == nil {
-			return c, nil
-		}
+	if _, err := os.Stat(name); err == nil {
+		return name, nil
 	}
 
 	// Try relative to the executable (production / `make build`).
-	exe, err := os.Executable()
-	if err == nil {
+	if exe, err := os.Executable(); err == nil {
 		// executable is typically bin/git-taintedd; db/ is at project root.
-		import_path_candidates := []string{
-			exe + "/../../db/migrations",
-		}
-		for _, c := range import_path_candidates {
-			if _, err := os.Stat(c); err == nil {
-				return c, nil
-			}
+		candidate := exe + "/../../" + name
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
 		}
 	}
 
-	return "", fmt.Errorf("cannot locate db/migrations: set GT_MIGRATIONS_DIR env var")
+	return "", fmt.Errorf("cannot locate %s: set GT_MIGRATIONS_DIR env var", name)
 }
 
 // Ensure model.Clock is satisfied by wallClock at compile time.

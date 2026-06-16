@@ -2,7 +2,7 @@ GO         ?= go
 PKG        := ./...
 DOCKER     := docker
 
-.PHONY: tidy generate sqlc oapi-server lint vet test race cover \
+.PHONY: tidy generate sqlc oapi-server lint vet test race cover test-mysql \
         build build-server build-cli docker up-local down e2e smoke verify-spec clean
 
 tidy:            ; $(GO) mod tidy
@@ -30,5 +30,9 @@ up-local:        ; $(DOCKER) compose -f docker-compose.local.yml up --build -d
 down:            ; $(DOCKER) compose -f docker-compose.local.yml down -v
 
 e2e:             ; $(GO) test -tags=e2e -count=1 ./internal/sync/... ./internal/api/...
+# test-mysql runs the MySQL Store integration suite (build tag mysql_it) against a
+# throwaway mysql:8.4 container started by testcontainers-go. Requires a running
+# Docker daemon. On-demand only — NOT part of the default Docker-free gate.
+test-mysql:      ; $(GO) test -tags=mysql_it -count=1 ./internal/store/...
 smoke: up-local  ; ./scripts/smoke.sh
 clean:           ; rm -rf bin cover.out

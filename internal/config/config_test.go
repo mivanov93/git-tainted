@@ -107,6 +107,37 @@ func TestLoad(t *testing.T) {
 			},
 			wantErr: ErrConfig,
 		},
+		{
+			name: "mysql driver without DSN fails",
+			env: map[string]string{
+				"GT_DB_DRIVER": "mysql",
+			},
+			wantErr: ErrConfig,
+		},
+		{
+			name: "mysql driver with DSN ok (no sqlite path required)",
+			env: map[string]string{
+				"GT_DB_DRIVER": "mysql",
+				"GT_MYSQL_DSN": "user:pass@tcp(127.0.0.1:3306)/git_tainted?multiStatements=true",
+			},
+			want: func(t *testing.T, c *Config) {
+				t.Helper()
+				if c.DBDriver != "mysql" {
+					t.Errorf("DBDriver = %q, want mysql", c.DBDriver)
+				}
+				if c.MySQLDSN == "" {
+					t.Errorf("MySQLDSN must be set")
+				}
+			},
+		},
+		{
+			name: "unknown driver fails",
+			env: map[string]string{
+				"GT_DB_DRIVER":   "postgres",
+				"GT_SQLITE_PATH": "/data/x.db",
+			},
+			wantErr: ErrConfig,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
