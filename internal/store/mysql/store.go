@@ -269,7 +269,7 @@ func (s *mysqlStore) GetRef(ctx context.Context, remoteID model.RemoteID, tagNam
 		}
 		return nil, fmt.Errorf("GetRef: %w", err)
 	}
-	ref := refFromMySQLRow(row, model.SHA1)
+	ref := refFromMySQLRow(row)
 	return &ref, nil
 }
 
@@ -280,7 +280,7 @@ func (s *mysqlStore) ListTags(ctx context.Context, remoteID model.RemoteID) ([]m
 	}
 	out := make([]model.Ref, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, refFromMySQLRow(r, model.SHA1))
+		out = append(out, refFromMySQLRow(r))
 	}
 	return out, nil
 }
@@ -349,16 +349,16 @@ func (s *mysqlStore) ReplayObservations(ctx context.Context, remoteID model.Remo
 			RowHash:      r.RowHash,
 		}
 		if b := bytesFromNullString(r.PrevOid); len(b) > 0 {
-			obs.PrevOID = model.OIDFromRaw(b, model.SHA1)
+			obs.PrevOID = model.OIDFromRaw(b)
 		}
 		if b := bytesFromNullString(r.NewOid); len(b) > 0 {
-			obs.NewOID = model.OIDFromRaw(b, model.SHA1)
+			obs.NewOID = model.OIDFromRaw(b)
 		}
 		if b := bytesFromNullString(r.PrevPeeledOid); len(b) > 0 {
-			obs.PrevPeeledOID = model.OIDFromRaw(b, model.SHA1)
+			obs.PrevPeeledOID = model.OIDFromRaw(b)
 		}
 		if b := bytesFromNullString(r.NewPeeledOid); len(b) > 0 {
-			obs.NewPeeledOID = model.OIDFromRaw(b, model.SHA1)
+			obs.NewPeeledOID = model.OIDFromRaw(b)
 		}
 		if r.CanonicalMeta.Valid {
 			obs.CanonicalMeta = r.CanonicalMeta.String

@@ -86,8 +86,27 @@ func MustParseOID(hexStr string, algo HashAlgo) OID {
 	return o
 }
 
-// OIDFromRaw wraps already-validated raw bytes (e.g. read from the Store).
-func OIDFromRaw(raw []byte, algo HashAlgo) OID { return OID{Raw: raw, Algo: algo} }
+// AlgoForRawLen infers the hash algorithm from a raw oid's byte width: sha1=20,
+// sha256=32. Width is ground truth for the algorithm (the two never collide), so a
+// raw oid read back from the Store can be labelled without a separate algo column.
+// Returns "" (unknown) for any other length.
+func AlgoForRawLen(n int) HashAlgo {
+	switch n {
+	case 20: // sha1
+		return SHA1
+	case 32: // sha256
+		return SHA256
+	default:
+		return ""
+	}
+}
+
+// OIDFromRaw wraps already-validated raw bytes (e.g. read from the Store),
+// inferring the algorithm from the byte width (AlgoForRawLen). It previously took
+// an explicit algo, but every Store decode passed a hard-coded sha1 — mislabelling
+// sha256 oids and breaking OID.Equal (false taints on re-sync). Inferring from
+// width is correct: sha1 (20B) and sha256 (32B) never share a length.
+func OIDFromRaw(raw []byte) OID { return OID{Raw: raw, Algo: AlgoForRawLen(len(raw))} }
 
 // subtleConstEq is a constant-time byte-slice compare.
 func subtleConstEq(a, b []byte) bool {
