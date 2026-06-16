@@ -24,3 +24,7 @@
 .DS_Store
 /git-tainted
 /git-taintedd
+/git-tainted-ctl
+
+# Agent worktrees (transient; created by isolated sub-agents)
+/.claude/
