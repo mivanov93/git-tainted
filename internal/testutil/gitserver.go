@@ -84,8 +84,8 @@ func findGitHTTPBackend(tb testing.TB) string {
 // clock so committer/author dates are deterministic.
 type RepoBuilder struct {
 	tb      testing.TB
-	dir     string            // working clone dir (pushes to bare repo)
-	bareDir string            // the bare repo dir (for git config)
+	dir     string // working clone dir (pushes to bare repo)
+	bareDir string // the bare repo dir (for git config)
 	algo    model.HashAlgo
 	labels  map[string]string // label → full hex oid
 }
@@ -99,8 +99,16 @@ func NewRepo(tb testing.TB, srv *GitServer, name string, algo model.HashAlgo) *R
 		tb.Fatalf("NewRepo mkdir %s: %v", bareDir, err)
 	}
 
-	// Init bare repo with default (SHA-1) object format.
-	runGit(tb, bareDir, "init", "--bare", "--initial-branch=main")
+	// Init the bare repo (and the working clone below) with the REQUESTED object
+	// format, so sha256 fixtures actually produce 32-byte/64-hex oids. Both must
+	// match — a sha1 clone cannot push to a sha256 bare repo. (Previously this
+	// hard-coded the sha1 default, so the algo arg only affected oid parsing and
+	// the sha256 path was never exercised end-to-end.)
+	if !algo.Valid() {
+		tb.Fatalf("NewRepo: invalid hash algo %q (want sha1 or sha256)", algo)
+	}
+	objectFormat := "--object-format=" + string(algo)
+	runGit(tb, bareDir, "init", "--bare", "--initial-branch=main", objectFormat)
 	runGit(tb, bareDir, "config", "receive.denyCurrentBranch", "ignore")
 	// Allow dumb HTTP access
 	runGit(tb, bareDir, "config", "http.receivepack", "true")
@@ -115,7 +123,7 @@ func NewRepo(tb testing.TB, srv *GitServer, name string, algo model.HashAlgo) *R
 	}
 	tb.Cleanup(func() { _ = os.RemoveAll(workDir) })
 
-	runGit(tb, workDir, "init", "--initial-branch=main")
+	runGit(tb, workDir, "init", "--initial-branch=main", objectFormat)
 	runGit(tb, workDir, "config", "user.email", "test@example.com")
 	runGit(tb, workDir, "config", "user.name", "Test")
 	runGit(tb, workDir, "remote", "add", "origin", bareDir)
