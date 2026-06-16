@@ -3,18 +3,24 @@ package store
 import (
 	"database/sql"
 	"fmt"
-	"os"
-	"path/filepath"
+	"io/fs"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
-// runMigrations applies all *.sql files in migrDir in lexical order, tracking
-// applied versions in schema_migrations. Each file runs in its own transaction.
-// Idempotent: already-applied versions are skipped without error. The
-// schema_migrations table is created if absent (bootstrapping the first run).
-func runMigrations(db *sql.DB, migrDir string) error {
+// migrateNowNS returns the current wall time as unix-nanoseconds. The migration
+// runners execute before the Store is open and before the Clock seam is
+// injected, so they use wall time directly (not the model.Clock seam).
+func migrateNowNS() int64 { return time.Now().UnixNano() }
+
+// RunMigrations applies all *.sql files in fsys (in lexical/numeric order),
+// tracking applied versions in schema_migrations. Each file runs in its own
+// transaction. Idempotent: already-applied versions are skipped without error.
+// The schema_migrations table is created if absent (bootstrapping the first
+// run). fsys is rooted at the .sql files (e.g. db.SQLiteMigrations).
+func RunMigrations(db *sql.DB, fsys fs.FS) error {
 	// Bootstrap: create schema_migrations if it does not exist yet.
 	// This must happen outside any per-migration txn so it is visible on the
 	// first pass even before 0001_init.sql creates it.
@@ -26,29 +32,10 @@ func runMigrations(db *sql.DB, migrDir string) error {
 		return fmt.Errorf("migrate: bootstrap schema_migrations: %w", err)
 	}
 
-	entries, err := os.ReadDir(migrDir)
+	migs, err := collectMigrations(fsys)
 	if err != nil {
-		return fmt.Errorf("migrate: read dir %s: %w", migrDir, err)
+		return err
 	}
-
-	// Collect and sort .sql files by their 4-digit numeric prefix.
-	type mig struct {
-		version int64
-		path    string
-	}
-	var migs []mig
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
-			continue
-		}
-		prefix := strings.SplitN(e.Name(), "_", 2)[0]
-		ver, err := strconv.ParseInt(prefix, 10, 64)
-		if err != nil {
-			return fmt.Errorf("migrate: cannot parse version from %q: %w", e.Name(), err)
-		}
-		migs = append(migs, mig{version: ver, path: filepath.Join(migrDir, e.Name())})
-	}
-	sort.Slice(migs, func(i, j int) bool { return migs[i].version < migs[j].version })
 
 	for _, m := range migs {
 		// Check if already applied.
@@ -61,9 +48,9 @@ func runMigrations(db *sql.DB, migrDir string) error {
 			continue // already applied; skip
 		}
 
-		ddl, err := os.ReadFile(m.path)
+		ddl, err := fs.ReadFile(fsys, m.name)
 		if err != nil {
-			return fmt.Errorf("migrate: read %s: %w", m.path, err)
+			return fmt.Errorf("migrate: read %s: %w", m.name, err)
 		}
 
 		tx, err := db.Begin()
@@ -72,14 +59,12 @@ func runMigrations(db *sql.DB, migrDir string) error {
 		}
 		if _, err := tx.Exec(string(ddl)); err != nil {
 			_ = tx.Rollback()
-			return fmt.Errorf("migrate: apply version %d (%s): %w", m.version, filepath.Base(m.path), err)
+			return fmt.Errorf("migrate: apply version %d (%s): %w", m.version, m.name, err)
 		}
 		// Record as applied using a wall-clock ns timestamp.
-		// The migration runner does not use the Clock seam — it runs before the
-		// Store is open and before the Clock is injected.
 		if _, err := tx.Exec(
 			`INSERT INTO schema_migrations (version, applied_at_ns) VALUES (?, ?)`,
-			m.version, nowNS(),
+			m.version, migrateNowNS(),
 		); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("migrate: record version %d: %w", m.version, err)
@@ -91,7 +76,7 @@ func runMigrations(db *sql.DB, migrDir string) error {
 	return nil
 }
 
-// runMigrationsMySQL is the MySQL variant of runMigrations. MySQL DDL statements
+// RunMigrationsMySQL is the MySQL variant of RunMigrations. MySQL DDL statements
 // implicitly COMMIT, so wrapping a migration file in a transaction gives no
 // atomicity (a multi-statement file that fails midway leaves the earlier tables
 // committed). Correctness therefore rests on every CREATE TABLE using
@@ -101,8 +86,9 @@ func runMigrations(db *sql.DB, migrDir string) error {
 //
 // The schema_migrations bookkeeping marker is written only AFTER the file's DDL
 // succeeds; if the process dies mid-file, the version is not recorded and the
-// next run re-applies the whole (idempotent) file.
-func runMigrationsMySQL(db *sql.DB, migrDir string) error {
+// next run re-applies the whole (idempotent) file. fsys is rooted at the .sql
+// files (e.g. db.MySQLMigrations).
+func RunMigrationsMySQL(db *sql.DB, fsys fs.FS) error {
 	const bootstrapDDL = `CREATE TABLE IF NOT EXISTS schema_migrations (
 		version       INT    NOT NULL,
 		applied_at_ns BIGINT NOT NULL,
@@ -112,7 +98,7 @@ func runMigrationsMySQL(db *sql.DB, migrDir string) error {
 		return fmt.Errorf("migrate(mysql): bootstrap schema_migrations: %w", err)
 	}
 
-	migs, err := collectMigrations(migrDir)
+	migs, err := collectMigrations(fsys)
 	if err != nil {
 		return err
 	}
@@ -128,17 +114,17 @@ func runMigrationsMySQL(db *sql.DB, migrDir string) error {
 			continue
 		}
 
-		ddl, err := os.ReadFile(m.path) //nolint:gosec // migration path comes from a trusted, in-repo dir
+		ddl, err := fs.ReadFile(fsys, m.name)
 		if err != nil {
-			return fmt.Errorf("migrate(mysql): read %s: %w", m.path, err)
+			return fmt.Errorf("migrate(mysql): read %s: %w", m.name, err)
 		}
 		// No txn wrapper: MySQL DDL auto-commits. IF NOT EXISTS makes re-runs safe.
 		if _, err := db.Exec(string(ddl)); err != nil {
-			return fmt.Errorf("migrate(mysql): apply version %d (%s): %w", m.version, filepath.Base(m.path), err)
+			return fmt.Errorf("migrate(mysql): apply version %d (%s): %w", m.version, m.name, err)
 		}
 		if _, err := db.Exec(
 			`INSERT INTO schema_migrations (version, applied_at_ns) VALUES (?, ?)`,
-			m.version, nowNS(),
+			m.version, migrateNowNS(),
 		); err != nil {
 			return fmt.Errorf("migrate(mysql): record version %d: %w", m.version, err)
 		}
@@ -146,18 +132,19 @@ func runMigrationsMySQL(db *sql.DB, migrDir string) error {
 	return nil
 }
 
-// migration is one discovered, version-prefixed .sql file.
+// migration is one discovered, version-prefixed .sql file (name is relative to
+// the migrations fs.FS root).
 type migration struct {
 	version int64
-	path    string
+	name    string
 }
 
-// collectMigrations lists and sorts the version-prefixed .sql files in migrDir.
-// Shared by the SQLite and MySQL runners.
-func collectMigrations(migrDir string) ([]migration, error) {
-	entries, err := os.ReadDir(migrDir)
+// collectMigrations lists and sorts the version-prefixed .sql files at the root
+// of fsys. Shared by the SQLite and MySQL runners.
+func collectMigrations(fsys fs.FS) ([]migration, error) {
+	entries, err := fs.ReadDir(fsys, ".")
 	if err != nil {
-		return nil, fmt.Errorf("migrate: read dir %s: %w", migrDir, err)
+		return nil, fmt.Errorf("migrate: read migrations fs: %w", err)
 	}
 	var migs []migration
 	for _, e := range entries {
@@ -169,7 +156,7 @@ func collectMigrations(migrDir string) ([]migration, error) {
 		if err != nil {
 			return nil, fmt.Errorf("migrate: cannot parse version from %q: %w", e.Name(), err)
 		}
-		migs = append(migs, migration{version: ver, path: filepath.Join(migrDir, e.Name())})
+		migs = append(migs, migration{version: ver, name: e.Name()})
 	}
 	sort.Slice(migs, func(i, j int) bool { return migs[i].version < migs[j].version })
 	return migs, nil

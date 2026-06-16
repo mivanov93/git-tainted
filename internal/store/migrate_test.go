@@ -2,12 +2,23 @@ package store
 
 import (
 	"database/sql"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"testing/fstest"
+
+	// Test-only: register the pure-Go sqlite driver so the dialect-agnostic
+	// migration runner can be exercised against an in-memory DB. The parent
+	// store package itself imports only internal/model + stdlib; the backend
+	// subpackages own the production driver imports.
+	_ "modernc.org/sqlite"
 )
+
+// sqliteTestDriver is the database/sql driver name used by these runner tests.
+const sqliteTestDriver = "sqlite"
 
 // repoRoot walks up from the test binary's source file to find go.mod.
 func repoRoot(tb testing.TB) string {
@@ -29,14 +40,20 @@ func repoRoot(tb testing.TB) string {
 	}
 }
 
+// sqliteMigrationsFS returns an fs.FS rooted at the on-disk SQLite migration
+// set (db/migrations-sqlite), exercising the real DDL through the fs.FS runner.
+func sqliteMigrationsFS(tb testing.TB) fs.FS {
+	tb.Helper()
+	return os.DirFS(filepath.Join(repoRoot(tb), "db", "migrations-sqlite"))
+}
+
 func TestSchemaInit(t *testing.T) {
-	root := repoRoot(t)
-	ddl, err := os.ReadFile(filepath.Join(root, "db", "migrations", "0001_init.sql")) //nolint:gosec // G304: test fixture path built from repoRoot
+	ddl, err := fs.ReadFile(sqliteMigrationsFS(t), "0001_init.sql")
 	if err != nil {
 		t.Fatalf("read 0001_init.sql: %v", err)
 	}
 
-	db, err := sql.Open(DriverName, ":memory:")
+	db, err := sql.Open(sqliteTestDriver, ":memory:")
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -96,12 +113,11 @@ func TestSchemaInit(t *testing.T) {
 }
 
 func TestSchemaMigrationsTable(t *testing.T) {
-	root := repoRoot(t)
-	ddl, err := os.ReadFile(filepath.Join(root, "db", "migrations", "0001_init.sql")) //nolint:gosec // G304: test fixture path built from repoRoot
+	ddl, err := fs.ReadFile(sqliteMigrationsFS(t), "0001_init.sql")
 	if err != nil {
 		t.Fatalf("read 0001_init.sql: %v", err)
 	}
-	db, err := sql.Open(DriverName, ":memory:")
+	db, err := sql.Open(sqliteTestDriver, ":memory:")
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -123,17 +139,16 @@ func TestSchemaMigrationsTable(t *testing.T) {
 }
 
 func TestMigrateRunner_FreshAndIdempotent(t *testing.T) {
-	root := repoRoot(t)
-	migrDir := filepath.Join(root, "db", "migrations")
+	migrFS := sqliteMigrationsFS(t)
 
-	db, err := sql.Open(DriverName, ":memory:")
+	db, err := sql.Open(sqliteTestDriver, ":memory:")
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer func() { _ = db.Close() }()
 
 	// First run: fresh migration.
-	if err := runMigrations(db, migrDir); err != nil {
+	if err := RunMigrations(db, migrFS); err != nil {
 		t.Fatalf("first migrate: %v", err)
 	}
 
@@ -147,19 +162,19 @@ func TestMigrateRunner_FreshAndIdempotent(t *testing.T) {
 	}
 
 	// Count the actual migration files so the assertion stays correct as files are added.
-	entries, err := os.ReadDir(migrDir)
+	entries, err := fs.ReadDir(migrFS, ".")
 	if err != nil {
-		t.Fatalf("read migrations dir: %v", err)
+		t.Fatalf("read migrations fs: %v", err)
 	}
 	var wantRows int
 	for _, e := range entries {
-		if !e.IsDir() && filepath.Ext(e.Name()) == ".sql" {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".sql") {
 			wantRows++
 		}
 	}
 
 	// Second run: must be a no-op (idempotent), no error.
-	if err := runMigrations(db, migrDir); err != nil {
+	if err := RunMigrations(db, migrFS); err != nil {
 		t.Fatalf("second migrate (idempotent): %v", err)
 	}
 
@@ -173,25 +188,64 @@ func TestMigrateRunner_FreshAndIdempotent(t *testing.T) {
 	}
 }
 
-func TestMigrateRunner_MissingDirFails(t *testing.T) {
-	db, err := sql.Open(DriverName, ":memory:")
+// TestMigrateRunner_MapFSOrdering proves the runner applies files in numeric
+// order from an arbitrary fs.FS (not just the on-disk set) and that the version
+// prefix is parsed from the filename.
+func TestMigrateRunner_MapFSOrdering(t *testing.T) {
+	migrFS := fstest.MapFS{
+		"0002_second.sql": {Data: []byte(`CREATE TABLE t2 (id INTEGER PRIMARY KEY)`)},
+		"0001_first.sql":  {Data: []byte(`CREATE TABLE t1 (id INTEGER PRIMARY KEY)`)},
+		"README.md":       {Data: []byte("not a migration")}, // must be ignored
+	}
+	db, err := sql.Open(sqliteTestDriver, ":memory:")
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer func() { _ = db.Close() }()
 
-	if err := runMigrations(db, "/nonexistent/path/migrations"); err == nil {
-		t.Errorf("missing migrations dir must return error")
+	if err := RunMigrations(db, migrFS); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	// Both versions recorded, exactly two rows (README ignored).
+	var cnt int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&cnt); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if cnt != 2 {
+		t.Errorf("schema_migrations rows = %d, want 2", cnt)
+	}
+	for _, v := range []int64{1, 2} {
+		var got int64
+		if err := db.QueryRow(`SELECT version FROM schema_migrations WHERE version = ?`, v).Scan(&got); err != nil {
+			t.Errorf("version %d not recorded: %v", v, err)
+		}
+	}
+}
+
+// TestMigrateRunner_BadVersionPrefixFails proves a non-numeric version prefix is
+// rejected (replaces the old missing-dir test, which is moot now that the
+// migrations are an in-binary fs.FS).
+func TestMigrateRunner_BadVersionPrefixFails(t *testing.T) {
+	migrFS := fstest.MapFS{
+		"bogus_name.sql": {Data: []byte(`CREATE TABLE x (id INTEGER PRIMARY KEY)`)},
+	}
+	db, err := sql.Open(sqliteTestDriver, ":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	if err := RunMigrations(db, migrFS); err == nil {
+		t.Errorf("migration with non-numeric version prefix must return error")
 	}
 }
 
 func TestSchemaCheckConstraints(t *testing.T) {
-	root := repoRoot(t)
-	ddl, err := os.ReadFile(filepath.Join(root, "db", "migrations", "0001_init.sql")) //nolint:gosec // G304: test fixture path built from repoRoot
+	ddl, err := fs.ReadFile(sqliteMigrationsFS(t), "0001_init.sql")
 	if err != nil {
 		t.Fatalf("read 0001_init.sql: %v", err)
 	}
-	db, err := sql.Open(DriverName, ":memory:")
+	db, err := sql.Open(sqliteTestDriver, ":memory:")
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
