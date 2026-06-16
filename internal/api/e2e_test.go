@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mivanov93/git-tainted/internal/api"
+	"github.com/mivanov93/git-tainted/internal/auth"
 	"github.com/mivanov93/git-tainted/internal/git"
 	"github.com/mivanov93/git-tainted/internal/lock"
 	"github.com/mivanov93/git-tainted/internal/model"
@@ -34,7 +35,7 @@ func newE2EServer(tb testing.TB) (*httptest.Server, model.Store, *testutil.FakeC
 	lk := lock.NewDBLease(s, clk)
 	syncer := tlsync.NewRemoteSyncer(s, runner, lk, clk, "e2e-test")
 
-	handler := api.NewServer(s, clk, syncer)
+	handler := api.NewServer(s, clk, syncer, auth.None(), nil)
 	srv := httptest.NewServer(handler)
 	tb.Cleanup(srv.Close)
 	return srv, s, clk, syncer

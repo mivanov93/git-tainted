@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/mivanov93/git-tainted/internal/auth"
 	"github.com/mivanov93/git-tainted/internal/model"
 	"github.com/mivanov93/git-tainted/internal/testutil"
 )
@@ -20,7 +21,7 @@ func newAPITestServer(tb testing.TB) (*httptest.Server, model.Store) {
 	s := testutil.NewTestStore(tb)
 
 	clk := &fixedClock{ns: 1_718_000_000_000_000_000}
-	srv := httptest.NewServer(NewServer(s, clk, nil))
+	srv := httptest.NewServer(NewServer(s, clk, nil, auth.None(), nil))
 	tb.Cleanup(srv.Close)
 	return srv, s
 }
@@ -197,7 +198,7 @@ func TestVerify_DoesntExist(t *testing.T) {
 func TestTracerRegisterAndVerify(t *testing.T) {
 	s := testutil.NewTestStore(t)
 	clk := &fixedClock{ns: 1_718_000_000_000_000_000}
-	httpSrv := httptest.NewServer(NewServer(s, clk, nil))
+	httpSrv := httptest.NewServer(NewServer(s, clk, nil, auth.None(), nil))
 	t.Cleanup(httpSrv.Close)
 
 	ctx := context.Background()

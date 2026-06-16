@@ -9,9 +9,21 @@ import (
 	"strings"
 
 	"github.com/mivanov93/git-tainted/internal/api/oapi"
+	"github.com/mivanov93/git-tainted/internal/auth"
 	"github.com/mivanov93/git-tainted/internal/git"
 	"github.com/mivanov93/git-tainted/internal/model"
 )
+
+// principalOf returns the authenticated principal for an audit line. Under
+// auth=none (or any open path) the middleware injects "anonymous"; if no
+// principal is present at all it falls back to "anonymous" so audit lines always
+// carry a value.
+func principalOf(ctx context.Context) string {
+	if p, ok := auth.PrincipalFromContext(ctx); ok && p != "" {
+		return p
+	}
+	return auth.AnonymousPrincipal
+}
 
 // GetHealthz implements GET /healthz.
 func (s *StrictServerImpl) GetHealthz(_ context.Context, _ oapi.GetHealthzRequestObject) (oapi.GetHealthzResponseObject, error) {
@@ -123,6 +135,9 @@ func (s *StrictServerImpl) CreateRemote(ctx context.Context, req oapi.CreateRemo
 		return nil, err
 	}
 	r.ID = id
+	s.log.Info("audit: remote created",
+		"op", "createRemote", "principal", principalOf(ctx),
+		"remote_id", int64(id), "normalized_url", normURL)
 	return oapi.CreateRemote201JSONResponse(remoteToOAPI(*r)), nil
 }
 
@@ -172,6 +187,8 @@ func (s *StrictServerImpl) UpdateRemote(ctx context.Context, req oapi.UpdateRemo
 		}
 		return nil, err
 	}
+	s.log.Info("audit: remote updated",
+		"op", "updateRemote", "principal", principalOf(ctx), "remote_id", int64(r.ID))
 	return oapi.UpdateRemote200JSONResponse(remoteToOAPI(*r)), nil
 }
 
@@ -186,6 +203,8 @@ func (s *StrictServerImpl) DeleteRemote(ctx context.Context, req oapi.DeleteRemo
 	if err := s.store.SoftDeleteRemote(ctx, model.RemoteID(req.RemoteId), s.clock.NowNS()); err != nil {
 		return nil, err
 	}
+	s.log.Info("audit: remote deleted",
+		"op", "deleteRemote", "principal", principalOf(ctx), "remote_id", req.RemoteId)
 	return oapi.DeleteRemote204Response{}, nil
 }
 
@@ -202,6 +221,8 @@ func (s *StrictServerImpl) TriggerSync(ctx context.Context, req oapi.TriggerSync
 		}
 		return nil, err
 	}
+	s.log.Info("audit: sync triggered",
+		"op", "triggerSync", "principal", principalOf(ctx), "remote_id", req.RemoteId)
 	if s.syncer != nil {
 		go func() { //nolint:gosec // G118: intentional fire-and-forget; the request context must not cancel the sync
 			if _, err := s.syncer.SyncRemote(context.Background(), remoteID); err != nil {
@@ -382,14 +403,20 @@ func (s *StrictServerImpl) AckTaintEvent(ctx context.Context, req oapi.AckTaintE
 		}
 		return nil, err
 	}
-	if req.Body == nil || req.Body.AckedBy == "" {
-		return oapi.AckTaintEvent404JSONResponse(oapi.Error{Error: "acked_by is required"}), nil
+	// acked_by defaults to the authenticated principal when the body omits it, so
+	// an authenticated operator need not restate their identity. Under auth=none
+	// the principal is "anonymous"; the field is therefore always populated and the
+	// previous "acked_by is required" rejection no longer occurs.
+	principal := principalOf(ctx)
+	ackedBy := principal
+	if req.Body != nil && req.Body.AckedBy != "" {
+		ackedBy = req.Body.AckedBy
 	}
 	note := ""
-	if req.Body.AckNote != nil {
+	if req.Body != nil && req.Body.AckNote != nil {
 		note = *req.Body.AckNote
 	}
-	if err := s.store.AckTaintEvent(ctx, req.EventId, req.Body.AckedBy, note, s.clock.NowNS()); err != nil {
+	if err := s.store.AckTaintEvent(ctx, req.EventId, ackedBy, note, s.clock.NowNS()); err != nil {
 		if errors.Is(err, model.ErrNotFound) {
 			return oapi.AckTaintEvent404JSONResponse(oapi.Error{Error: "taint event not found"}), nil
 		}
@@ -398,6 +425,9 @@ func (s *StrictServerImpl) AckTaintEvent(ctx context.Context, req oapi.AckTaintE
 		}
 		return nil, err
 	}
+	s.log.Info("audit: taint event acked",
+		"op", "ackTaintEvent", "principal", principal,
+		"remote_id", req.RemoteId, "event_id", req.EventId, "acked_by", ackedBy)
 	return oapi.AckTaintEvent204Response{}, nil
 }
 

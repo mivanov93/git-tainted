@@ -14,6 +14,15 @@ import (
 // ErrConfig is the sentinel for any configuration validation/parse failure.
 var ErrConfig = errors.New("config: invalid configuration")
 
+// Auth modes for GT_AUTH_MODE (control-plane design spec §2). Default is None,
+// which reproduces the pre-auth loopback/edge-proxy posture exactly.
+const (
+	AuthModeNone   = "none"
+	AuthModeAPIKey = "apikey"
+	AuthModeBasic  = "basic"
+	AuthModeJWKS   = "jwks"
+)
+
 // Config is the fully-resolved service configuration (design spec §11).
 type Config struct {
 	DBDriver              string
@@ -33,6 +42,21 @@ type Config struct {
 	// Empty (default) means metrics are DISABLED — no collection, no /metrics endpoint.
 	MetricsAddr  string
 	PprofEnabled bool
+
+	// ---- Control-plane auth (design spec §2) -------------------------------
+	// AuthMode selects how the five mutating control endpoints are gated:
+	// none (default) | apikey | basic | jwks. Reads/health are never gated.
+	AuthMode string
+	// apikey mode.
+	APIKeys       string // comma-separated raw keys (SHA-256-hashed at load)
+	APIKeysSHA256 string // comma-separated lowercase-hex SHA-256 digests
+	// basic mode.
+	BasicAuth string // comma-separated user:bcrypt-hash entries
+	// jwks mode.
+	JWKSURL     string // JWKS endpoint URL (required for jwks)
+	JWTIssuer   string // expected iss (required for jwks)
+	JWTAudience string // expected aud (required for jwks)
+	JWTAlgs     string // comma-separated signature-algorithm allowlist (default RS256,ES256)
 }
 
 // Lookup resolves an env key to its value and presence, mirroring os.LookupEnv.
@@ -96,6 +120,16 @@ func Load(get Lookup) (*Config, error) {
 		// Default empty = metrics DISABLED (no listener, no collection).
 		MetricsAddr:  str("GT_METRICS_ADDR", ""),
 		PprofEnabled: boolean("GT_PPROF_ENABLED", false),
+
+		// Control-plane auth (default mode none = today's behavior).
+		AuthMode:      str("GT_AUTH_MODE", AuthModeNone),
+		APIKeys:       str("GT_API_KEYS", ""),
+		APIKeysSHA256: str("GT_API_KEYS_SHA256", ""),
+		BasicAuth:     str("GT_BASIC_AUTH", ""),
+		JWKSURL:       str("GT_JWKS_URL", ""),
+		JWTIssuer:     str("GT_JWT_ISSUER", ""),
+		JWTAudience:   str("GT_JWT_AUDIENCE", ""),
+		JWTAlgs:       str("GT_JWT_ALGS", "RS256,ES256"),
 	}
 
 	var err error
@@ -148,6 +182,14 @@ func (c *Config) validate() error {
 	}
 	if c.StalenessBudgetNS <= 0 {
 		return fmt.Errorf("%w: GT_STALENESS_BUDGET_NS=%d must be > 0", ErrConfig, c.StalenessBudgetNS)
+	}
+	switch c.AuthMode {
+	case AuthModeNone, AuthModeAPIKey, AuthModeBasic, AuthModeJWKS:
+		// Per-mode credential validation (keys/users/JWKS url+iss+aud) happens in
+		// auth.FromConfig at startup, which main treats as fatal; here we only
+		// reject an unknown mode value.
+	default:
+		return fmt.Errorf("%w: GT_AUTH_MODE=%q unsupported (want none, apikey, basic, or jwks)", ErrConfig, c.AuthMode)
 	}
 	return nil
 }
