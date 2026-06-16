@@ -42,6 +42,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -186,6 +187,7 @@ Flags:
   --tag <name>                Tag name override (skips git describe --exact-match HEAD)
   --json                      Emit machine-readable JSON verdict to stdout
   --strict                    Exit 10 instead of 0 when verdict is ok but confidence=stale
+  --insecure                  Allow plaintext http:// servers to non-loopback hosts (env: GT_INSECURE)
 
 Exit codes:
   0   ok (authoritative), or ok (stale) without --strict
@@ -217,6 +219,7 @@ Limitations (§15):
 		tagFlag            string
 		jsonFlag           bool
 		strictFlag         bool
+		insecureFlag       bool
 	)
 	fs.Var(&serverFlags, "server", "Server base URL (repeatable)")
 	fs.StringVar(&modeFlag, "mode", "", "Consolidation mode: quorum|unanimous|any-bad|first (default: quorum)")
@@ -227,6 +230,7 @@ Limitations (§15):
 	fs.StringVar(&tagFlag, "tag", "", "Tag name override (skips git describe --exact-match)")
 	fs.BoolVar(&jsonFlag, "json", false, "Emit machine-readable JSON verdict to stdout")
 	fs.BoolVar(&strictFlag, "strict", false, "Exit 10 instead of 0 for stale-ok")
+	fs.BoolVar(&insecureFlag, "insecure", false, "Allow plaintext http:// servers to non-loopback hosts (env: GT_INSECURE)")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -287,10 +291,12 @@ Limitations (§15):
 		perServerTimeout = d
 	}
 
-	// Validate server URLs.
+	// Validate server URLs: https is always allowed; plaintext http is refused for
+	// non-loopback hosts unless --insecure (or GT_INSECURE) is set.
+	insecure := insecureFlag || envBool(environ, "GT_INSECURE")
 	for _, s := range servers {
-		if _, err := url.Parse(s); err != nil {
-			diagf(stderr, "error: invalid server URL %q: %v\n", s, err)
+		if err := checkServerURL(s, insecure); err != nil {
+			diagf(stderr, "error: %v\n", err)
 			return 2
 		}
 	}
@@ -1116,6 +1122,47 @@ func envValue(environ []string, key string) string {
 		}
 	}
 	return ""
+}
+
+// envBool reports whether an env key is set to a truthy value (1/true/yes/on).
+func envBool(environ []string, key string) bool {
+	switch strings.ToLower(strings.TrimSpace(envValue(environ, key))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// isLoopbackHost reports whether host is localhost or a loopback IP literal.
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
+// checkServerURL validates a git-tainted server base URL. https is always
+// allowed; plaintext http is refused for non-loopback hosts unless insecure
+// is set (so local/loopback dev still works without --insecure).
+func checkServerURL(raw string, insecure bool) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return fmt.Errorf("invalid server URL %q", raw)
+	}
+	switch u.Scheme {
+	case "https":
+		return nil
+	case "http":
+		if insecure || isLoopbackHost(u.Hostname()) {
+			return nil
+		}
+		return fmt.Errorf("refusing plaintext server %q over the network — use https:// or pass --insecure", raw)
+	default:
+		return fmt.Errorf("server URL %q must be http or https", raw)
+	}
 }
 
 // diag writes a fixed diagnostic message to w (stderr).

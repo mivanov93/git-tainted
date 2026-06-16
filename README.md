@@ -70,6 +70,7 @@ git tainted [flags]
 --tag <name>                Tag name override (skips git describe --exact-match HEAD)
 --json                      Emit machine-readable JSON verdict to stdout
 --strict                    Exit 10 instead of 0 when verdict is ok but confidence=stale
+--insecure                  Allow plaintext http:// servers to non-loopback hosts (env: GT_INSECURE)
 ```
 
 **What it does:**
@@ -100,6 +101,10 @@ git tainted [flags]
 The production trust model is to run several **independent** git-tainted servers
 (different operators, different networks) and let the CLI corroborate their verdicts.
 No single server is a point of trust.
+
+By default the CLI **refuses plaintext `http://` servers on non-loopback hosts** —
+use `https://`, or pass `--insecure` (env `GT_INSECURE`) for local/testing. Loopback
+http (e.g. `http://127.0.0.1:8080`) is always allowed without the flag.
 
 ```sh
 # Query three independent servers and consolidate with the default quorum mode.
@@ -209,6 +214,8 @@ OpenAPI 3.1 (`spec/openapi.yaml`). Remote-scoped, tags-only:
 - `GET /healthz` · `/readyz` · `/metrics` · `/debug/pprof`
 
 There is **no app-level auth** — bind to loopback and front it with your own edge / proxy.
+The server speaks both **HTTP/1.1 and unencrypted HTTP/2 (h2c)** on its cleartext port,
+so an h2c-capable proxy can multiplex to it without TLS on the proxy↔server hop.
 
 ## Configuration
 
