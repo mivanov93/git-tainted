@@ -225,6 +225,40 @@ Environment, prefix `GT_` (see `.env.example`): `GT_SQLITE_PATH`, `GT_LISTEN_ADD
 `GT_GIT_TIMEOUT_NS`, `GT_METRICS_ADDR`. CLI: `GT_SERVER`. All timestamps are int64
 unix-nanoseconds.
 
+### MySQL backend
+
+The persistence layer (`model.Store`) has **two interchangeable implementations**
+behind one seam: the default SQLite store (`modernc.org/sqlite`) and a MySQL store
+(`go-sql-driver/mysql`, pure-Go / CGO-free). Both pass the same Store contract; the
+chain integrity, taint spine, and per-remote `chain_head` CAS behave identically.
+The server runs fully without MySQL — it is opt-in.
+
+Select it with `GT_DB_DRIVER=mysql` and a DSN in `GT_MYSQL_DSN`:
+
+```sh
+GT_DB_DRIVER=mysql \
+GT_MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/git_tainted?multiStatements=true&parseTime=false&clientFoundRows=true' \
+  git-taintedd
+```
+
+Required DSN params (the server validates them on startup):
+
+- `multiStatements=true` — the schema migrations (`db/migrations-mysql/`) are
+  multi-statement scripts.
+- `parseTime=false` — every timestamp is a `BIGINT` unix-nanosecond value, never
+  `DATETIME`.
+- `clientFoundRows=true` — `UPDATE` reports matched (not changed) rows, which the
+  store uses to distinguish "row not found" from "updated" (and the chain-head CAS,
+  which always writes strictly-new values, is unaffected by this).
+
+The MySQL schema targets MySQL 8 (InnoDB, `CHECK` constraints, `VARBINARY(32)` raw
+oids/hashes). Migrations run automatically at startup. The MySQL integration suite
+runs against a throwaway `mysql:8.4` container:
+
+```sh
+make test-mysql   # go test -tags=mysql_it ./internal/store/... (requires Docker)
+```
+
 ## Develop
 
 Go 1.26, SQLite (`modernc.org/sqlite`, pure-Go / CGO-free), sqlc, oapi-codegen,
