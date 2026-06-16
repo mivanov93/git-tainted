@@ -29,7 +29,10 @@ type Config struct {
 	ProtocolAllowlist     string
 	HostAllowlist         string
 	LogLevel              string
-	MetricsAddr           string
+	// MetricsAddr is the dedicated Prometheus listener address.
+	// Empty (default) means metrics are DISABLED — no collection, no /metrics endpoint.
+	MetricsAddr  string
+	PprofEnabled bool
 }
 
 // Lookup resolves an env key to its value and presence, mirroring os.LookupEnv.
@@ -48,6 +51,19 @@ func Load(get Lookup) (*Config, error) {
 			return v
 		}
 		return def
+	}
+	boolean := func(key string, def bool) bool {
+		v, ok := get(key)
+		if !ok {
+			return def
+		}
+		// Accept "true"/"1"/"yes" as true; anything else (incl. empty) is false.
+		switch v {
+		case "true", "1", "yes":
+			return true
+		default:
+			return false
+		}
 	}
 	i64 := func(key string, def int64) (int64, error) {
 		v, ok := get(key)
@@ -77,7 +93,9 @@ func Load(get Lookup) (*Config, error) {
 		ProtocolAllowlist: str("GT_PROTOCOL_ALLOWLIST", "https:ssh"),
 		HostAllowlist:     str("GT_HOST_ALLOWLIST", ""),
 		LogLevel:          str("GT_LOG_LEVEL", "info"),
-		MetricsAddr:       str("GT_METRICS_ADDR", "127.0.0.1:9090"),
+		// Default empty = metrics DISABLED (no listener, no collection).
+		MetricsAddr:  str("GT_METRICS_ADDR", ""),
+		PprofEnabled: boolean("GT_PPROF_ENABLED", false),
 	}
 
 	var err error

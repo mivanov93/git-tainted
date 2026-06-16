@@ -52,8 +52,12 @@ func TestLoad(t *testing.T) {
 				if c.LogLevel != "info" {
 					t.Errorf("LogLevel = %q, want info", c.LogLevel)
 				}
-				if c.MetricsAddr != "127.0.0.1:9090" {
-					t.Errorf("MetricsAddr = %q, want loopback default", c.MetricsAddr)
+				// Default MetricsAddr is empty (metrics disabled by default).
+				if c.MetricsAddr != "" {
+					t.Errorf("MetricsAddr = %q, want empty (disabled by default)", c.MetricsAddr)
+				}
+				if c.PprofEnabled {
+					t.Errorf("PprofEnabled = true, want false (disabled by default)")
 				}
 			},
 		},
@@ -137,6 +141,49 @@ func TestLoad(t *testing.T) {
 				"GT_SQLITE_PATH": "/data/x.db",
 			},
 			wantErr: ErrConfig,
+		},
+		{
+			name: "GT_METRICS_ADDR and GT_PPROF_ENABLED parsed",
+			env: map[string]string{
+				"GT_SQLITE_PATH":  "/data/x.db",
+				"GT_METRICS_ADDR": "127.0.0.1:9090",
+				"GT_PPROF_ENABLED": "true",
+			},
+			want: func(t *testing.T, c *Config) {
+				t.Helper()
+				if c.MetricsAddr != "127.0.0.1:9090" {
+					t.Errorf("MetricsAddr = %q, want 127.0.0.1:9090", c.MetricsAddr)
+				}
+				if !c.PprofEnabled {
+					t.Errorf("PprofEnabled = false, want true")
+				}
+			},
+		},
+		{
+			name: "GT_PPROF_ENABLED=1 is true",
+			env: map[string]string{
+				"GT_SQLITE_PATH":   "/data/x.db",
+				"GT_PPROF_ENABLED": "1",
+			},
+			want: func(t *testing.T, c *Config) {
+				t.Helper()
+				if !c.PprofEnabled {
+					t.Errorf("PprofEnabled = false, want true for value '1'")
+				}
+			},
+		},
+		{
+			name: "GT_PPROF_ENABLED=false stays false",
+			env: map[string]string{
+				"GT_SQLITE_PATH":   "/data/x.db",
+				"GT_PPROF_ENABLED": "false",
+			},
+			want: func(t *testing.T, c *Config) {
+				t.Helper()
+				if c.PprofEnabled {
+					t.Errorf("PprofEnabled = true, want false for value 'false'")
+				}
+			},
 		},
 	}
 	for _, tc := range tests {

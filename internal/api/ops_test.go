@@ -8,7 +8,7 @@ import (
 )
 
 func TestOpsEndpoints(t *testing.T) {
-	srv := httptest.NewServer(OpsHandler())
+	srv := httptest.NewServer(OpsHandler(nil, false))
 	defer srv.Close()
 
 	tests := []struct {
@@ -38,5 +38,51 @@ func TestOpsEndpoints(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestPprofGating verifies that /debug/pprof/ returns 200 when pprofEnabled=true
+// and 404 when pprofEnabled=false.
+func TestPprofGating(t *testing.T) {
+	t.Run("pprof enabled → 200", func(t *testing.T) {
+		srv := httptest.NewServer(OpsHandler(nil, true))
+		defer srv.Close()
+		resp, err := http.Get(srv.URL + "/debug/pprof/")
+		if err != nil {
+			t.Fatalf("GET /debug/pprof/: %v", err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("pprof enabled: status=%d, want 200", resp.StatusCode)
+		}
+	})
+
+	t.Run("pprof disabled → 404", func(t *testing.T) {
+		srv := httptest.NewServer(OpsHandler(nil, false))
+		defer srv.Close()
+		resp, err := http.Get(srv.URL + "/debug/pprof/")
+		if err != nil {
+			t.Fatalf("GET /debug/pprof/: %v", err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("pprof disabled: status=%d, want 404", resp.StatusCode)
+		}
+	})
+}
+
+// TestMetricsHandler verifies that MetricsHandler serves GET /metrics.
+func TestMetricsHandler(t *testing.T) {
+	m := NewMetrics()
+	srv := httptest.NewServer(MetricsHandler(m))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/metrics")
+	if err != nil {
+		t.Fatalf("GET /metrics: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("MetricsHandler /metrics: status=%d, want 200", resp.StatusCode)
 	}
 }
