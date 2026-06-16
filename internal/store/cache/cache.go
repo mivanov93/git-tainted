@@ -22,6 +22,7 @@ package cache
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -116,6 +117,21 @@ func newOtter[K comparable, V any](cfg Config) *otter.Cache[K, V] {
 	return otter.Must(opts)
 }
 
+// ---- value isolation -------------------------------------------------------
+// The bare store returns a freshly-scanned object on every read, so callers may
+// safely mutate what they receive — the UpdateRemote handler reads a Remote then
+// sets fields before writing it back, and the sync writer flips Deleted/LastSeen
+// on a prior Ref obtained from ListTags. The cache hands out objects it OWNS, so
+// it MUST return a copy to preserve that contract; otherwise a caller's in-place
+// mutation corrupts the cached entry and races concurrent readers. Shallow struct
+// copies suffice: callers only mutate value fields, never the contents of the
+// shared slice/pointer fields (chain hashes, oids), which are read-only everywhere.
+
+func cloneRemote(r *model.Remote) *model.Remote { cp := *r; return &cp }
+func cloneRef(r *model.Ref) *model.Ref          { cp := *r; return &cp }
+
+func cloneProof(p *model.ObservationProof) *model.ObservationProof { cp := *p; return &cp }
+
 // ---- generation helpers ----------------------------------------------------
 
 // genCell returns the live atomic generation cell for id, creating it (at 0) on
@@ -207,14 +223,14 @@ func (c *cachingStore) GetRemote(ctx context.Context, id model.RemoteID) (*model
 	gen := c.genOf(id)
 	k := keyRemote(id, gen)
 	if v, ok := c.remoteByID.GetIfPresent(k); ok {
-		return v, nil
+		return cloneRemote(v), nil
 	}
 	r, err := c.Store.GetRemote(ctx, id)
 	if err != nil {
 		return nil, err //nolint:wrapcheck // transparent decorator: preserve the store's sentinel errors verbatim
 	}
 	c.remoteByID.Set(k, r)
-	return r, nil
+	return cloneRemote(r), nil
 }
 
 func (c *cachingStore) GetRemoteByURL(ctx context.Context, normalizedURL string) (*model.Remote, error) {
@@ -239,14 +255,14 @@ func (c *cachingStore) GetRemoteByURL(ctx context.Context, normalizedURL string)
 	if c.genOf(r.ID) != g {
 		c.remoteByID.Invalidate(rk)
 	}
-	return r, nil
+	return cloneRemote(r), nil
 }
 
 func (c *cachingStore) GetRef(ctx context.Context, remoteID model.RemoteID, tagName string) (*model.Ref, error) {
 	gen := c.genOf(remoteID)
 	k := keyRef(remoteID, gen, tagName)
 	if v, ok := c.ref.GetIfPresent(k); ok {
-		return v, nil
+		return cloneRef(v), nil
 	}
 	r, err := c.Store.GetRef(ctx, remoteID, tagName)
 	if err != nil {
@@ -255,14 +271,14 @@ func (c *cachingStore) GetRef(ctx context.Context, remoteID model.RemoteID, tagN
 	// Populate the immutable refID→remoteID index for the refID-keyed methods.
 	c.rememberRef(r.ID, r.RemoteID)
 	c.ref.Set(k, r)
-	return r, nil
+	return cloneRef(r), nil
 }
 
 func (c *cachingStore) ListTags(ctx context.Context, remoteID model.RemoteID) ([]model.Ref, error) {
 	gen := c.genOf(remoteID)
 	k := keyTags(remoteID, gen)
 	if v, ok := c.tags.GetIfPresent(k); ok {
-		return v, nil
+		return slices.Clone(v), nil
 	}
 	refs, err := c.Store.ListTags(ctx, remoteID)
 	if err != nil {
@@ -273,7 +289,7 @@ func (c *cachingStore) ListTags(ctx context.Context, remoteID model.RemoteID) ([
 		c.rememberRef(refs[i].ID, refs[i].RemoteID)
 	}
 	c.tags.Set(k, refs)
-	return refs, nil
+	return slices.Clone(refs), nil
 }
 
 func (c *cachingStore) LatestObservationForRef(ctx context.Context, refID model.RefID) (*model.ObservationProof, error) {
@@ -292,12 +308,12 @@ func (c *cachingStore) LatestObservationForRef(ctx context.Context, refID model.
 			return nil, err //nolint:wrapcheck // transparent decorator: preserve store sentinels
 		}
 		c.rememberRef(refID, p.RemoteID) // warm the index for subsequent calls
-		return p, nil
+		return cloneProof(p), nil
 	}
 	gen := c.genOf(rid) // snapshot BEFORE the read; the fill uses this same gen
 	k := keyLobs(refID, gen)
 	if v, ok := c.lobs.GetIfPresent(k); ok {
-		return v, nil
+		return cloneProof(v), nil
 	}
 	p, err := c.Store.LatestObservationForRef(ctx, refID)
 	if err != nil {
@@ -306,7 +322,7 @@ func (c *cachingStore) LatestObservationForRef(ctx context.Context, refID model.
 	// Cache under the pre-read generation: if a write committed during the read it
 	// already bumped rid past `gen`, orphaning this key so the next read re-fetches.
 	c.lobs.Set(k, p)
-	return p, nil
+	return cloneProof(p), nil
 }
 
 // ---- invalidating writes ---------------------------------------------------
@@ -334,8 +350,8 @@ func (c *cachingStore) SoftDeleteRemote(ctx context.Context, id model.RemoteID, 
 	if err := c.Store.SoftDeleteRemote(ctx, id, atNS); err != nil {
 		return err //nolint:wrapcheck // transparent decorator: preserve store sentinels
 	}
-	c.bump(id)        // existing per-remote keys (remote|ref|tags|lobs) go stale
-	c.setGen.Add(1)   // membership changed → URL→ID index resolution must re-fetch
+	c.bump(id)      // existing per-remote keys (remote|ref|tags|lobs) go stale
+	c.setGen.Add(1) // membership changed → URL→ID index resolution must re-fetch
 	return nil
 }
 
