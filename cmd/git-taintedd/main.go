@@ -17,6 +17,7 @@ import (
 
 	"github.com/mivanov93/git-tainted/db"
 	"github.com/mivanov93/git-tainted/internal/api"
+	"github.com/mivanov93/git-tainted/internal/auth"
 	"github.com/mivanov93/git-tainted/internal/buildinfo"
 	"github.com/mivanov93/git-tainted/internal/config"
 	"github.com/mivanov93/git-tainted/internal/git"
@@ -111,6 +112,30 @@ Environment variables (all GT_*):
                                no collection. Set to e.g. 127.0.0.1:9090 to enable.
   GT_PPROF_ENABLED             Expose /debug/pprof/* on the API listener (default: false).
                                Set to true only in controlled environments.
+
+  Auth (control endpoints only)
+  -----------------------------
+  Gates ONLY the five mutating control operations (create/update/delete remote,
+  trigger sync, ack taint event). Reads (verify, all GETs) and health probes are
+  never gated. Default mode "none" reproduces the loopback/edge-proxy posture.
+
+  GT_AUTH_MODE                 none (default) | apikey | basic | jwks.
+                               Unknown value is a fatal startup error.
+  GT_API_KEYS                  apikey mode: comma-separated raw keys. Each is
+                               SHA-256-hashed at load and the cleartext dropped.
+  GT_API_KEYS_SHA256           apikey mode: comma-separated lowercase-hex SHA-256
+                               key digests (raw key never enters the env).
+                               apikey mode needs at least one key via either var.
+                               Client sends Authorization: Bearer <key> or X-API-Key.
+  GT_BASIC_AUTH                basic mode: comma-separated user:bcrypt-hash entries
+                               (htpasswd-style; raw passwords never in the env).
+                               Client sends HTTP Basic. At least one entry required.
+  GT_JWKS_URL                  jwks mode: JWKS endpoint URL (required).
+  GT_JWT_ISSUER                jwks mode: expected iss claim (required).
+  GT_JWT_AUDIENCE              jwks mode: expected aud claim (required).
+  GT_JWT_ALGS                  jwks mode: comma-separated signature-algorithm
+                               allowlist (default: RS256,ES256). "none" and all
+                               HS* algorithms are always rejected.
 `
 
 // wallClock is the real time implementation of model.Clock.
@@ -166,8 +191,23 @@ func run() error {
 	holder := fmt.Sprintf("git-taintedd-%d", os.Getpid())
 	syncer := tlsync.NewRemoteSyncer(st, gitRunner, lk, clk, holder)
 
+	// ---- Auth -----------------------------------------------------------------
+	// Build the control-plane authenticator from config (default mode=none =
+	// today's loopback/edge-proxy posture). Misconfiguration (apikey with no keys,
+	// jwks without url/issuer/audience, basic with no users / bad hash) is fatal
+	// here at startup — never a per-request failure. authCtx bounds the jwks
+	// background-refresh goroutine to the process lifetime.
+	authCtx, authCancel := context.WithCancel(context.Background())
+	defer authCancel()
+	authn, err := auth.FromConfig(authCtx, cfg)
+	if err != nil {
+		log.Error("auth init failed", "mode", cfg.AuthMode, "err", err)
+		return err
+	}
+	log.Info("auth ready", "mode", cfg.AuthMode)
+
 	// ---- HTTP handler ---------------------------------------------------------
-	apiHandler := api.NewServer(st, clk, syncer)
+	apiHandler := api.NewServer(st, clk, syncer, authn, log)
 	// OpsHandler mounts /healthz, /readyz, and conditionally /debug/pprof/*.
 	opsHandler := api.OpsHandler(st, cfg.PprofEnabled)
 
