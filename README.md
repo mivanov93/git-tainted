@@ -61,12 +61,15 @@ git tainted [flags]
 **Flags:**
 
 ```
---server <url>   Server base URL (default: $GT_SERVER or http://127.0.0.1:8080)
---remote <name>  Git remote name to resolve (default: origin)
---url <url>      Remote URL override (skips git remote get-url)
---tag <name>     Tag name override (skips git describe --exact-match HEAD)
---json           Emit machine-readable JSON verdict to stdout
---strict         Exit 10 instead of 0 when verdict is ok but confidence=stale
+--server <url>              Server base URL (repeatable; env: GT_SERVERS, GT_SERVER)
+--mode <mode>               Consolidation mode: quorum|unanimous|any-bad|first (env: GT_MODE, default: quorum)
+--freshness-window <dur>    Freshness window for quorum (env: GT_FRESHNESS_WINDOW_NS in ns, default: 15m)
+--timeout <dur>             Per-server HTTP timeout (default: 10s)
+--remote <name>             Git remote name to resolve (default: origin)
+--url <url>                 Remote URL override (skips git remote get-url)
+--tag <name>                Tag name override (skips git describe --exact-match HEAD)
+--json                      Emit machine-readable JSON verdict to stdout
+--strict                    Exit 10 instead of 0 when verdict is ok but confidence=stale
 ```
 
 **What it does:**
@@ -74,8 +77,9 @@ git tainted [flags]
 1. Resolves the remote URL via `git remote get-url origin` (or `--remote`/`--url`).
 2. Resolves the tag at HEAD via `git describe --tags --exact-match HEAD` (or `--tag`).
 3. Resolves the peeled commit via `git rev-parse HEAD^{commit}`.
-4. Calls `GET {server}/v1/verify?remote=<url>&tag=<tag>&commit=<commit>`.
-5. Prints a human verdict (JSON with `--json`) and exits with a code:
+4. Queries all configured servers in parallel (`GET /v1/verify?remote=…&tag=…&commit=…`).
+5. Consolidates the verdicts using the chosen `--mode`.
+6. Prints a human verdict (JSON with `--json`) and exits with a code:
 
 **Exit codes:**
 
@@ -83,12 +87,91 @@ git tainted [flags]
 |------|-----------|---------|
 | 0 | `ok` (authoritative) | `ok: <tag> matches <remote> at <commit>` |
 | 0 | `ok` (stale, without `--strict`) | `ok (stale: last sync <age> ago): ...` |
-| 2 | Usage / request / parse error | stderr diagnostic |
+| 2 | Usage / request / parse error / all servers unreachable | stderr diagnostic |
 | 3 | `mismatch` | `MISMATCH: <tag> on <remote> records <recorded-commit>, you have <commit>` |
 | 4 | `tainted` | `TAINTED: <tag> on <remote> was rewritten (<reason> at <when>)` |
 | 5 | `doesnt_exist` | `not found: <tag> is not a tag on <remote>` |
 | 6 | `not_tracked` | `not tracked: <remote> is not registered with the server (ask an operator to add it)` |
+| 7 | `no_consensus` | servers disagree and the chosen mode produced no result |
 | 10 | `ok` (stale) + `--strict` | Same message as stale-ok |
+
+## Multiple servers (quorum)
+
+The production trust model is to run several **independent** git-tainted servers
+(different operators, different networks) and let the CLI corroborate their verdicts.
+No single server is a point of trust.
+
+```sh
+# Query three independent servers and consolidate with the default quorum mode.
+GT_SERVERS=https://tainted-a.example.com,https://tainted-b.example.com,https://tainted-c.example.com \
+  git tainted
+
+# Equivalently, with flags:
+git tainted \
+  --server https://tainted-a.example.com \
+  --server https://tainted-b.example.com \
+  --server https://tainted-c.example.com \
+  --mode quorum
+```
+
+**Consolidation modes:**
+
+| Mode | Behaviour |
+|------|-----------|
+| `quorum` (default) | Freshness-weighted majority of configured servers. A BAD server whose `last_synced` timestamp is newer than all GOOD servers' timestamps by more than `--freshness-window` (default 15m) overrides the majority — the clean servers are considered pre-tamper-observation. |
+| `unanimous` | Every configured server must be reachable and return the same verdict. Any disagreement or unreachable server → `no_consensus` (exit 7). |
+| `any-bad` | If **any** reachable server returns a BAD verdict (`tainted` or `mismatch`), that wins. Useful for maximum sensitivity. |
+| `first` | In configured order, the first server returning a conclusive verdict (`ok`/`tainted`/`mismatch`) wins; falls back to the first inconclusive. |
+
+**Freshness-weighted quorum in detail:**
+
+The quorum algorithm recognises that a clean-majority vote can be wrong if the clean
+servers simply haven't polled the remote since a tag was rewritten:
+
+1. Among reachable servers, a **strict majority** (> half of all configured servers)
+   of the same verdict normally wins.
+2. **Freshness override** — if there are ≥1 BAD server and the freshest BAD
+   `last_synced` is newer than the freshest GOOD `last_synced` by more than
+   `--freshness-window`, the freshest BAD verdict wins. The reason line explains:
+   `fresh tainted at srv-c (synced 2m ago) newer than freshest clean sync (3h ago) by 2h58m > window 15m`.
+3. If no strict majority exists → `no_consensus` (exit 7).
+
+**Human output** (three servers, freshness override active):
+
+```
+  https://a.example.com → ok (confidence=stale, last_sync=3h0m, seq=?)
+  https://b.example.com → ok (confidence=stale, last_sync=3h0m, seq=?)
+  https://c.example.com → tainted (confidence=authoritative, last_sync=2m0s, seq=?)
+  dissent: https://a.example.com → ok (last_sync=3h0m)
+  dissent: https://b.example.com → ok (last_sync=3h0m)
+quorum: TAINTED — fresh tainted at https://c.example.com (synced 2m0s ago) newer than freshest clean sync (3h0m ago) by 2h58m > window 15m
+```
+
+**`--json` output** (same scenario):
+
+```json
+{
+  "mode": "quorum",
+  "freshness_window_ns": 900000000000,
+  "final_status": "tainted",
+  "exit_code": 4,
+  "reason": "fresh tainted at https://c.example.com (synced 2m0s ago) ...",
+  "servers": [
+    {"url": "https://a.example.com", "reachable": true, "status": "ok", "confidence": "stale", "last_synced_ns": ...},
+    {"url": "https://b.example.com", "reachable": true, "status": "ok", "confidence": "stale", "last_synced_ns": ...},
+    {"url": "https://c.example.com", "reachable": true, "status": "tainted", "confidence": "authoritative", "last_synced_ns": ...}
+  ],
+  "dissent": [
+    {"url": "https://a.example.com", "reachable": true, "status": "ok", ...},
+    {"url": "https://b.example.com", "reachable": true, "status": "ok", ...}
+  ]
+}
+```
+
+> **Security note:** quorum is only meaningful if the servers are **operationally
+> independent** — different operators, machines, and networks. Servers sharing
+> infrastructure, credentials, or a common upstream mirror can all be compromised
+> simultaneously; a quorum among them provides no additional guarantee.
 
 ## How it works
 
