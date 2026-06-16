@@ -15,3 +15,27 @@ sql:
           - db_type: "BLOB"
             go_type:
               type: "[]byte"
+  - engine: "mysql"
+    schema: "db/migrations-mysql"
+    queries: "internal/store/mysqlc/queries"
+    gen:
+      go:
+        package: "mysqlc"
+        out: "internal/store/mysqlc"
+        sql_package: "database/sql"
+        emit_interface: true
+        emit_json_tags: false
+        emit_empty_slices: true
+        overrides:
+          - db_type: "BLOB"
+            go_type:
+              type: "[]byte"
+          # NOT NULL VARBINARY (the 32-byte chain hashes: chain_head_hash,
+          # prev_hash, row_hash) → []byte. NULLable VARBINARY (the oid columns)
+          # stays sql.NullString under sqlc v1.31.1 (its nullable override does
+          # not fire for the mysql engine); the store boundary converts raw oid
+          # bytes <-> sql.NullString byte-exactly (Go strings hold arbitrary
+          # bytes; the driver sends them verbatim to VARBINARY).
+          - db_type: "VARBINARY"
+            go_type:
+              type: "[]byte"
