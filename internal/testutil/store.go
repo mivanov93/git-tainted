@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/mivanov93/git-tainted/db"
 	"github.com/mivanov93/git-tainted/internal/model"
@@ -47,8 +48,8 @@ func SeedRemote(tb testing.TB, s model.Store, url string) model.RemoteID {
 		NormalizedURL:       url,
 		Transport:           model.TransportHTTPS,
 		TaintAnyTagDeletion: true,
-		SyncIntervalNS:      300_000_000_000,
-		StalenessBudgetNS:   3_600_000_000_000,
+		SyncInterval:        5 * time.Minute,
+		StalenessBudget:     time.Hour,
 		Status:              model.RemoteActive,
 		ChainHeadHash:       make([]byte, 32),
 		CreatedAtNS:         1_718_000_000_000_000_000,
@@ -89,7 +90,7 @@ func AssertChainIntact(tb testing.TB, ctx context.Context, s model.Store, remote
 	// Full chain replay: replay all observations from the beginning and recompute hashes.
 	const batchSize = 500
 	prevHash := make([]byte, 32) // genesis: 32 zero bytes
-	var seq int64                 // start from seq > 0
+	var seq int64                // start from seq > 0
 	var count int64
 
 	for {

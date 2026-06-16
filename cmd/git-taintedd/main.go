@@ -203,16 +203,16 @@ func run() error {
 	cached := cache.Wrap(st, cache.Config{
 		Enabled:    cfg.CacheEnabled,
 		MaxEntries: cfg.CacheMaxEntries,
-		TTLNS:      cfg.CacheTTLNS,
+		TTL:        cfg.CacheTTL,
 	})
-	log.Info("cache ready", "enabled", cfg.CacheEnabled, "max_entries", cfg.CacheMaxEntries, "ttl_ns", cfg.CacheTTLNS)
+	log.Info("cache ready", "enabled", cfg.CacheEnabled, "max_entries", cfg.CacheMaxEntries, "ttl", cfg.CacheTTL)
 
 	// ---- Seams ----------------------------------------------------------------
 	clk := wallClock{}
 	lk := lock.NewDBLease(cached, clk)
 	gitRunner := git.NewExecGitRunner(git.Config{
 		GitBin:        cfg.GitBin,
-		TimeoutNS:     cfg.GitTimeoutNS,
+		Timeout:       cfg.GitTimeout,
 		ProtocolAllow: cfg.ProtocolAllowlist,
 	})
 	// holder identifies this process in the lease table.
@@ -294,7 +294,7 @@ func run() error {
 	defer stop()
 
 	// ---- Scheduler ------------------------------------------------------------
-	sched := tlsync.NewScheduler(cached, syncer, clk, log, cfg.SchedulerTickNS, cfg.SyncConcurrency)
+	sched := tlsync.NewScheduler(cached, syncer, clk, log, cfg.SchedulerTick, cfg.SyncConcurrency)
 
 	schedCtx, schedCancel := context.WithCancel(context.Background())
 	schedDone := make(chan struct{})

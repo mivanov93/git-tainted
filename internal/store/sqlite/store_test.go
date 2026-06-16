@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/mivanov93/git-tainted/db"
 	"github.com/mivanov93/git-tainted/internal/model"
@@ -39,8 +40,8 @@ func seedRemote(tb testing.TB, s model.Store, url string) model.RemoteID {
 		NormalizedURL:       url,
 		Transport:           model.TransportHTTPS,
 		TaintAnyTagDeletion: true,
-		SyncIntervalNS:      300_000_000_000,
-		StalenessBudgetNS:   3_600_000_000_000,
+		SyncInterval:        5 * time.Minute,
+		StalenessBudget:     time.Hour,
 		Status:              model.RemoteActive,
 		ChainHeadHash:       make([]byte, 32),
 		CreatedAtNS:         1_718_000_000_000_000_000,
@@ -63,8 +64,8 @@ func TestCreateAndGetRemote(t *testing.T) {
 		NormalizedURL:       "https://github.com/org/repo.git",
 		Transport:           model.TransportHTTPS,
 		TaintAnyTagDeletion: true,
-		SyncIntervalNS:      300_000_000_000,
-		StalenessBudgetNS:   3_600_000_000_000,
+		SyncInterval:        5 * time.Minute,
+		StalenessBudget:     time.Hour,
 		Status:              model.RemoteActive,
 		ChainHeadHash:       make([]byte, 32),
 		CreatedAtNS:         1_718_000_000_000_000_000,
@@ -121,7 +122,7 @@ func TestCreateRemote_DupNormalizedURLConflict(t *testing.T) {
 	r := &model.Remote{
 		URL: "https://github.com/org/repo.git", NormalizedURL: "https://github.com/org/repo.git",
 		Transport: model.TransportHTTPS, TaintAnyTagDeletion: true,
-		SyncIntervalNS: 300_000_000_000, StalenessBudgetNS: 3_600_000_000_000,
+		SyncInterval: 5 * time.Minute, StalenessBudget: time.Hour,
 		Status: model.RemoteActive, ChainHeadHash: make([]byte, 32),
 		CreatedAtNS: 1_718_000_000_000_000_000, UpdatedAtNS: 1_718_000_000_000_000_000,
 	}
@@ -167,7 +168,7 @@ func TestListRemotes_Pagination(t *testing.T) {
 		r := &model.Remote{
 			URL: u, NormalizedURL: u,
 			Transport: model.TransportHTTPS, TaintAnyTagDeletion: true,
-			SyncIntervalNS: 300_000_000_000, StalenessBudgetNS: 3_600_000_000_000,
+			SyncInterval: 5 * time.Minute, StalenessBudget: time.Hour,
 			Status: model.RemoteActive, ChainHeadHash: make([]byte, 32),
 			CreatedAtNS: 1_718_000_000_000_000_000, UpdatedAtNS: 1_718_000_000_000_000_000,
 		}
@@ -200,9 +201,9 @@ func TestUpsertAndGetRef(t *testing.T) {
 
 	rid := seedRemote(t, s, "https://github.com/org/refs.git")
 	ref := &model.Ref{
-		RemoteID:   rid,
-		TagName:    "v1.0.0",
-		CurrentOID: model.MustParseOID("1111111111111111111111111111111111111111", model.SHA1),
+		RemoteID:    rid,
+		TagName:     "v1.0.0",
+		CurrentOID:  model.MustParseOID("1111111111111111111111111111111111111111", model.SHA1),
 		FirstSeenNS: 1_718_000_000_000_000_000,
 		LastSeenNS:  1_718_000_000_000_000_000,
 	}

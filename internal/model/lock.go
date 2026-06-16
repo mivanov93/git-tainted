@@ -1,6 +1,9 @@
 package model
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Lease is a held per-remote writer lease bound to the chain head it was
 // acquired against. Release performs the chain_head CAS (design spec §9.1,
@@ -17,10 +20,10 @@ type Lease struct {
 // chain_head CAS), degrading to a process-local mutex for single-instance.
 type Lock interface {
 	// AcquireRemoteLease wins (or renews) the exclusive writer lease for a
-	// remote's chain. ttlNS bounds the lease. It records the current
+	// remote's chain. ttl bounds the lease. It records the current
 	// chain_head as the CAS witness in the returned Lease. Returns
 	// ErrLeaseHeld if another live holder owns it.
-	AcquireRemoteLease(ctx context.Context, remoteID RemoteID, holder string, ttlNS int64) (*Lease, error)
+	AcquireRemoteLease(ctx context.Context, remoteID RemoteID, holder string, ttl time.Duration) (*Lease, error)
 
 	// Release relinquishes the lease, performing the chain_head CAS: the
 	// release (and the caller's committed observations) are valid only if the

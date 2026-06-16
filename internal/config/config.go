@@ -1,7 +1,9 @@
 // Package config loads the GT_* environment (design spec §11) into a validated
-// Config. Durations are int64 unix-ns ints (no time.Duration in the config
-// surface, per the unix-ns-everywhere convention). Load is pure over a lookup
-// function so it is deterministic in tests; LoadEnv binds it to the process env.
+// Config. The GT_*_NS env vars carry int64 unix-ns on the wire, but genuine
+// durations are surfaced as time.Duration on Config (the dur loader parses the
+// ns int then wraps it); only timestamps stay int64-ns. Load is pure over a
+// lookup function so it is deterministic in tests; LoadEnv binds it to the
+// process env.
 package config
 
 import (
@@ -9,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 )
 
 // ErrConfig is the sentinel for any configuration validation/parse failure.
@@ -25,19 +28,19 @@ const (
 
 // Config is the fully-resolved service configuration (design spec §11).
 type Config struct {
-	DBDriver              string
-	SQLitePath            string
-	MySQLDSN              string
-	ListenAddr            string
-	SyncConcurrency       int
-	SyncDefaultIntervalNS int64
-	SchedulerTickNS       int64
-	StalenessBudgetNS     int64
-	GitBin                string
-	GitTimeoutNS          int64
-	ProtocolAllowlist     string
-	HostAllowlist         string
-	LogLevel              string
+	DBDriver            string
+	SQLitePath          string
+	MySQLDSN            string
+	ListenAddr          string
+	SyncConcurrency     int
+	SyncDefaultInterval time.Duration
+	SchedulerTick       time.Duration
+	StalenessBudget     time.Duration
+	GitBin              string
+	GitTimeout          time.Duration
+	ProtocolAllowlist   string
+	HostAllowlist       string
+	LogLevel            string
 	// MetricsAddr is the dedicated Prometheus listener address.
 	// Empty (default) means metrics are DISABLED — no collection, no /metrics endpoint.
 	MetricsAddr  string
@@ -49,9 +52,9 @@ type Config struct {
 	CacheEnabled bool
 	// CacheMaxEntries bounds each logical Otter cache (size-based eviction).
 	CacheMaxEntries int
-	// CacheTTLNS is the staleness backstop in unix-ns, independent of the
-	// (immediate) per-remote generation invalidation. 0 disables TTL expiry.
-	CacheTTLNS int64
+	// CacheTTL is the staleness backstop, independent of the (immediate)
+	// per-remote generation invalidation. 0 disables TTL expiry.
+	CacheTTL time.Duration
 
 	// ---- Control-plane auth (design spec §2) -------------------------------
 	// AuthMode selects how the five mutating control endpoints are gated:
@@ -117,6 +120,16 @@ func Load(get Lookup) (*Config, error) {
 		}
 		return int(n), nil
 	}
+	// dur parses a GT_*_NS int64-ns env var and returns it as a time.Duration.
+	// The wire/env stays int64-ns (the unix-ns convention); only the in-Go value
+	// is typed. Absent → def.
+	dur := func(key string, def time.Duration) (time.Duration, error) {
+		n, err := i64(key, int64(def))
+		if err != nil {
+			return 0, err
+		}
+		return time.Duration(n), nil
+	}
 
 	c := &Config{
 		DBDriver:          str("GT_DB_DRIVER", "sqlite"),
@@ -149,22 +162,22 @@ func Load(get Lookup) (*Config, error) {
 	if c.SyncConcurrency, err = iInt("GT_SYNC_CONCURRENCY", 4); err != nil {
 		return nil, err
 	}
-	if c.SyncDefaultIntervalNS, err = i64("GT_SYNC_DEFAULT_INTERVAL_NS", 300_000_000_000); err != nil {
+	if c.SyncDefaultInterval, err = dur("GT_SYNC_DEFAULT_INTERVAL_NS", 5*time.Minute); err != nil {
 		return nil, err
 	}
-	if c.SchedulerTickNS, err = i64("GT_SCHEDULER_TICK_NS", 5_000_000_000); err != nil {
+	if c.SchedulerTick, err = dur("GT_SCHEDULER_TICK_NS", 5*time.Second); err != nil {
 		return nil, err
 	}
-	if c.StalenessBudgetNS, err = i64("GT_STALENESS_BUDGET_NS", 3_600_000_000_000); err != nil {
+	if c.StalenessBudget, err = dur("GT_STALENESS_BUDGET_NS", time.Hour); err != nil {
 		return nil, err
 	}
-	if c.GitTimeoutNS, err = i64("GT_GIT_TIMEOUT_NS", 60_000_000_000); err != nil {
+	if c.GitTimeout, err = dur("GT_GIT_TIMEOUT_NS", time.Minute); err != nil {
 		return nil, err
 	}
 	if c.CacheMaxEntries, err = iInt("GT_CACHE_MAX_ENTRIES", 100_000); err != nil {
 		return nil, err
 	}
-	if c.CacheTTLNS, err = i64("GT_CACHE_TTL_NS", 60_000_000_000); err != nil {
+	if c.CacheTTL, err = dur("GT_CACHE_TTL_NS", time.Minute); err != nil {
 		return nil, err
 	}
 
@@ -190,23 +203,23 @@ func (c *Config) validate() error {
 	if c.SyncConcurrency <= 0 {
 		return fmt.Errorf("%w: GT_SYNC_CONCURRENCY=%d must be > 0", ErrConfig, c.SyncConcurrency)
 	}
-	if c.SyncDefaultIntervalNS <= 0 {
-		return fmt.Errorf("%w: GT_SYNC_DEFAULT_INTERVAL_NS=%d must be > 0", ErrConfig, c.SyncDefaultIntervalNS)
+	if c.SyncDefaultInterval <= 0 {
+		return fmt.Errorf("%w: GT_SYNC_DEFAULT_INTERVAL_NS=%d must be > 0", ErrConfig, int64(c.SyncDefaultInterval))
 	}
-	if c.SchedulerTickNS <= 0 {
-		return fmt.Errorf("%w: GT_SCHEDULER_TICK_NS=%d must be > 0", ErrConfig, c.SchedulerTickNS)
+	if c.SchedulerTick <= 0 {
+		return fmt.Errorf("%w: GT_SCHEDULER_TICK_NS=%d must be > 0", ErrConfig, int64(c.SchedulerTick))
 	}
-	if c.GitTimeoutNS <= 0 {
-		return fmt.Errorf("%w: GT_GIT_TIMEOUT_NS=%d must be > 0", ErrConfig, c.GitTimeoutNS)
+	if c.GitTimeout <= 0 {
+		return fmt.Errorf("%w: GT_GIT_TIMEOUT_NS=%d must be > 0", ErrConfig, int64(c.GitTimeout))
 	}
-	if c.StalenessBudgetNS <= 0 {
-		return fmt.Errorf("%w: GT_STALENESS_BUDGET_NS=%d must be > 0", ErrConfig, c.StalenessBudgetNS)
+	if c.StalenessBudget <= 0 {
+		return fmt.Errorf("%w: GT_STALENESS_BUDGET_NS=%d must be > 0", ErrConfig, int64(c.StalenessBudget))
 	}
 	if c.CacheMaxEntries <= 0 {
 		return fmt.Errorf("%w: GT_CACHE_MAX_ENTRIES=%d must be > 0", ErrConfig, c.CacheMaxEntries)
 	}
-	if c.CacheTTLNS < 0 {
-		return fmt.Errorf("%w: GT_CACHE_TTL_NS=%d must be >= 0 (0 disables the TTL backstop)", ErrConfig, c.CacheTTLNS)
+	if c.CacheTTL < 0 {
+		return fmt.Errorf("%w: GT_CACHE_TTL_NS=%d must be >= 0 (0 disables the TTL backstop)", ErrConfig, int64(c.CacheTTL))
 	}
 	switch c.AuthMode {
 	case AuthModeNone, AuthModeAPIKey, AuthModeBasic, AuthModeJWKS:

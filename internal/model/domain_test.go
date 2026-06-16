@@ -11,8 +11,8 @@ func TestDomainStructsCompile(t *testing.T) {
 	_ = r.URL
 	_ = r.NormalizedURL
 	_ = r.Transport
-	_ = r.SyncIntervalNS
-	_ = r.StalenessBudgetNS
+	_ = r.SyncInterval
+	_ = r.StalenessBudget
 	_ = r.TaintAnyTagDeletion
 	_ = r.HashAlgo // *HashAlgo
 	_ = r.Status

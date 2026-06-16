@@ -40,10 +40,10 @@ type Config struct {
 	Enabled bool
 	// MaxEntries bounds each logical Otter cache (size-based S3-FIFO eviction).
 	MaxEntries int
-	// TTLNS is the staleness backstop in unix-nanoseconds, independent of the
-	// (immediate) generation invalidation. 0 disables TTL expiry entirely — the
-	// generation mechanism alone then governs correctness.
-	TTLNS int64
+	// TTL is the staleness backstop, independent of the (immediate) generation
+	// invalidation. 0 disables TTL expiry entirely — the generation mechanism
+	// alone then governs correctness.
+	TTL time.Duration
 }
 
 // cachingStore decorates an inner model.Store. It EMBEDS the inner Store so every
@@ -102,7 +102,7 @@ func Wrap(inner model.Store, cfg Config) model.Store {
 	return cs
 }
 
-// newOtter builds one bounded (+optionally TTL'd) Otter cache. TTLNS<=0 attaches
+// newOtter builds one bounded (+optionally TTL'd) Otter cache. TTL<=0 attaches
 // no ExpiryCalculator so entries never expire on time — generation invalidation
 // is then the sole correctness mechanism (exercised by the TTL=0 race test).
 func newOtter[K comparable, V any](cfg Config) *otter.Cache[K, V] {
@@ -111,8 +111,8 @@ func newOtter[K comparable, V any](cfg Config) *otter.Cache[K, V] {
 		maxEntries = 100_000
 	}
 	opts := &otter.Options[K, V]{MaximumSize: maxEntries}
-	if cfg.TTLNS > 0 {
-		opts.ExpiryCalculator = otter.ExpiryWriting[K, V](time.Duration(cfg.TTLNS))
+	if cfg.TTL > 0 {
+		opts.ExpiryCalculator = otter.ExpiryWriting[K, V](cfg.TTL)
 	}
 	return otter.Must(opts)
 }

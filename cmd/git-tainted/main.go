@@ -273,21 +273,23 @@ Limitations (§15):
 	}
 
 	// --- Resolve freshness window ---
-	freshnessWindowNS := int64(15 * time.Minute)
+	// freshnessWindow is a genuine duration (time.Duration); the GT_FRESHNESS_WINDOW_NS
+	// env stays int64-ns on the wire and is wrapped here.
+	freshnessWindow := 15 * time.Minute
 	if freshnessWindowStr != "" {
 		d, err := time.ParseDuration(freshnessWindowStr)
 		if err != nil {
 			diagf(stderr, "error: invalid --freshness-window %q: %v\n", freshnessWindowStr, err)
 			return 2
 		}
-		freshnessWindowNS = int64(d)
+		freshnessWindow = d
 	} else if fwns := envValue(environ, "GT_FRESHNESS_WINDOW_NS"); fwns != "" {
 		var ns int64
 		if _, err := fmt.Sscanf(fwns, "%d", &ns); err != nil {
 			diagf(stderr, "error: invalid GT_FRESHNESS_WINDOW_NS %q: %v\n", fwns, err)
 			return 2
 		}
-		freshnessWindowNS = ns
+		freshnessWindow = time.Duration(ns)
 	}
 
 	// --- Resolve per-server timeout ---
@@ -362,10 +364,10 @@ Limitations (§15):
 	}
 
 	// Step 6: Multi-server consolidation.
-	con := consolidate(results, mode, freshnessWindowNS)
+	con := consolidate(results, mode, freshnessWindow)
 
 	if jsonFlag {
-		return emitMultiJSON(con, mode, freshnessWindowNS, stdout)
+		return emitMultiJSON(con, mode, freshnessWindow, stdout)
 	}
 	return emitMultiHuman(con, results, mode, strictFlag, stdout, stderr)
 }
@@ -440,7 +442,7 @@ func fanOut(servers []string, remoteURL, tagName, commit string, perServerTimeou
 }
 
 // consolidate is the pure, unit-tested consolidation function.
-func consolidate(results []ServerResult, mode Mode, freshnessWindowNS int64) Consolidated {
+func consolidate(results []ServerResult, mode Mode, freshnessWindow time.Duration) Consolidated {
 	total := len(results)
 
 	reachable := make([]ServerResult, 0, total)
@@ -468,12 +470,12 @@ func consolidate(results []ServerResult, mode Mode, freshnessWindowNS int64) Con
 	case ModeUnanimous:
 		return consolidateUnanimous(results, reachable, total)
 	default: // quorum
-		return consolidateQuorum(results, reachable, total, freshnessWindowNS)
+		return consolidateQuorum(results, reachable, total, freshnessWindow)
 	}
 }
 
 // consolidateQuorum implements the freshness-weighted quorum algorithm.
-func consolidateQuorum(results, reachable []ServerResult, configuredTotal int, freshnessWindowNS int64) Consolidated {
+func consolidateQuorum(results, reachable []ServerResult, configuredTotal int, freshnessWindow time.Duration) Consolidated {
 	// Partition reachable by verdict class.
 	var badServers, goodServers []ServerResult
 	for _, r := range reachable {
@@ -491,9 +493,11 @@ func consolidateQuorum(results, reachable []ServerResult, configuredTotal int, f
 	if len(badServers) > 0 && len(goodServers) > 0 {
 		badFreshMax := maxLastSynced(badServers)
 		goodFreshMax := maxLastSynced(goodServers)
-		if badFreshMax > 0 && badFreshMax > goodFreshMax+freshnessWindowNS {
+		// badFreshMax/goodFreshMax are LastSynced TIMESTAMPS (int64-ns); widen the
+		// duration window to int64-ns to compare against the timestamp gap.
+		if badFreshMax > 0 && badFreshMax > goodFreshMax+int64(freshnessWindow) {
 			freshestBad := freshestBadServer(badServers)
-			gapNS := badFreshMax - goodFreshMax
+			gapNS := badFreshMax - goodFreshMax // span between two timestamps (int64-ns)
 			badSyncAge := syncAgeStr(badFreshMax)
 			goodSyncAge := syncAgeStr(goodFreshMax)
 			reason := fmt.Sprintf(
@@ -503,7 +507,7 @@ func consolidateQuorum(results, reachable []ServerResult, configuredTotal int, f
 				badSyncAge,
 				goodSyncAge,
 				formatDurNS(gapNS),
-				formatDurNS(freshnessWindowNS),
+				formatDurNS(int64(freshnessWindow)),
 			)
 			// Dissent = good servers that lost to freshness.
 			return Consolidated{
@@ -822,7 +826,7 @@ func toServerJSONEntry(r ServerResult) serverJSONEntry {
 	return e
 }
 
-func emitMultiJSON(con Consolidated, mode Mode, freshnessWindowNS int64, stdout io.Writer) int {
+func emitMultiJSON(con Consolidated, mode Mode, freshnessWindow time.Duration, stdout io.Writer) int {
 	servers := make([]serverJSONEntry, len(con.PerServer))
 	for i, r := range con.PerServer {
 		servers[i] = toServerJSONEntry(r)
@@ -833,7 +837,7 @@ func emitMultiJSON(con Consolidated, mode Mode, freshnessWindowNS int64, stdout 
 	}
 	out := multiJSONOutput{
 		Mode:              mode,
-		FreshnessWindowNS: freshnessWindowNS,
+		FreshnessWindowNS: int64(freshnessWindow), // wire stays int64-ns
 		FinalStatus:       con.FinalStatus,
 		ExitCode:          con.ExitCode,
 		Reason:            con.Reason,
