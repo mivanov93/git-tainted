@@ -6,7 +6,9 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/mivanov93/git-tainted/db"
 	"github.com/mivanov93/git-tainted/internal/api"
+	"github.com/mivanov93/git-tainted/internal/buildinfo"
 	"github.com/mivanov93/git-tainted/internal/config"
 	"github.com/mivanov93/git-tainted/internal/git"
 	"github.com/mivanov93/git-tainted/internal/lock"
@@ -25,11 +28,59 @@ import (
 )
 
 func main() {
+	if code, handled := handleFlags(os.Args[1:], os.Stdout, os.Stderr); handled {
+		os.Exit(code)
+	}
 	if err := run(); err != nil {
 		// run already logged the cause; exit non-zero for the supervisor.
 		os.Exit(1)
 	}
 }
+
+// handleFlags processes --version/-v and --help/-h before the env-driven server
+// starts. It returns (exitCode, handled): handled==true means the caller should
+// exit with exitCode without running the server. Normal startup passes no flags,
+// so it returns (0, false) and run() proceeds.
+func handleFlags(args []string, stdout, stderr io.Writer) (int, bool) {
+	fs := flag.NewFlagSet("git-taintedd", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.Usage = func() { _, _ = fmt.Fprint(stdout, serverUsage) }
+	var versionFlag bool
+	fs.BoolVar(&versionFlag, "version", false, "Print version and exit")
+	fs.BoolVar(&versionFlag, "v", false, "Print version and exit (shorthand)")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0, true // -h/--help: usage already printed to stdout
+		}
+		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
+		return 2, true
+	}
+	if versionFlag {
+		_, _ = fmt.Fprintf(stdout, "git-taintedd %s\n", buildinfo.String())
+		return 0, true
+	}
+	return 0, false
+}
+
+const serverUsage = `git-taintedd — the git-tainted server.
+
+Polls registered git remotes (via ` + "`git ls-remote --tags`" + `), records each
+tag's oid in an append-only, per-remote, SHA-256 hash-chained ledger, and serves
+the verify/admin API. Configured entirely via GT_* environment variables;
+migrations are embedded in the binary (no db/ folder needed at runtime).
+
+Usage:
+  git-taintedd [--version|-v] [--help|-h]
+
+Key environment variables (see .env.example for the full list):
+  GT_DB_DRIVER     sqlite (default) | mysql
+  GT_SQLITE_PATH   SQLite DB path (driver=sqlite)
+  GT_MYSQL_DSN     MySQL DSN (driver=mysql; needs multiStatements=true&clientFoundRows=true)
+  GT_LISTEN_ADDR   HTTP listen address (default 127.0.0.1:8080; serves HTTP/1.1 + h2c)
+  GT_METRICS_ADDR  Prometheus metrics address
+  GT_SYNC_DEFAULT_INTERVAL_NS  GT_SCHEDULER_TICK_NS  GT_STALENESS_BUDGET_NS
+  GT_GIT_BIN  GT_GIT_TIMEOUT_NS  GT_PROTOCOL_ALLOWLIST  GT_LOG_LEVEL
+`
 
 // wallClock is the real time implementation of model.Clock.
 type wallClock struct{}
