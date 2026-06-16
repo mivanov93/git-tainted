@@ -96,6 +96,12 @@ func run() error {
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	// Serve both HTTP/1.1 and unencrypted HTTP/2 (h2c) on the cleartext listener.
+	// Go 1.24+ native support — no golang.org/x/net/http2/h2c wrapper.
+	protocols := new(http.Protocols)
+	protocols.SetHTTP1(true)
+	protocols.SetUnencryptedHTTP2(true)
+	srv.Protocols = protocols
 
 	// ---- Signal context -------------------------------------------------------
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
