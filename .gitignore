@@ -22,3 +22,5 @@
 
 # Editor
 .DS_Store
+/git-tainted
+/git-taintedd
