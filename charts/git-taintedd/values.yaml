@@ -1,0 +1,358 @@
+# Default values for git-taintedd.
+# This is a YAML-formatted file. Every value below maps to either a GT_* env var
+# (see `git-taintedd --help`) or a Kubernetes object knob. Durations are unix-ns
+# integers (the project convention), never Go durations or RFC3339.
+
+# -- Number of replicas. NOTE: with the sqlite driver this MUST stay 1 — sqlite
+# is single-writer and the chain-head CAS relies on one writer. The Deployment
+# template `fail`s if db.driver=sqlite and replicaCount>1. Use mysql for >1.
+replicaCount: 1
+
+image:
+  # -- Image repository. Release images are published to Docker Hub.
+  repository: docker.io/mivanov93/git-taintedd
+  # -- Image tag. Empty string defaults to .Chart.AppVersion (see _helpers.tpl).
+  tag: ""
+  # -- Image pull policy.
+  pullPolicy: IfNotPresent
+
+# -- Image pull secrets for private registries (list of {name: ...}).
+imagePullSecrets: []
+
+# -- Override the chart name portion of resource names.
+nameOverride: ""
+# -- Override the full resource name (release-name + chart-name).
+fullnameOverride: ""
+
+# -- Extra labels applied to every rendered object.
+commonLabels: {}
+
+# ============================================================================
+# config — every NON-SECRET GT_* value, mapped to a typed key with the app's
+# own default (from internal/config/config.go). Rendered into a ConfigMap and
+# wired via envFrom. Secrets (mysqlDSN/apiKeys/apiKeysSHA256/basicAuth) live
+# under `.secrets`, NOT here.
+# ============================================================================
+config:
+  db:
+    # -- Storage backend: "sqlite" (default, single-writer, needs persistence)
+    # or "mysql" (multi-replica capable, needs secrets.data.mysqlDSN). [enum]
+    driver: sqlite
+
+  sqlite:
+    # -- Path to the SQLite DB file (GT_SQLITE_PATH). Must live on the mounted
+    # persistent volume (see .persistence.mountPath). Only used when
+    # db.driver=sqlite.
+    path: /data/git-tainted.db
+
+  # -- API listen address (GT_LISTEN_ADDR). MUST bind 0.0.0.0 in-cluster so the
+  # Service can reach it (the app default 127.0.0.1 is loopback-only).
+  listenAddr: 0.0.0.0:8080
+
+  # Scheduler / sync ----------------------------------------------------------
+  sync:
+    # -- Max concurrent in-flight syncs (GT_SYNC_CONCURRENCY).
+    concurrency: 4
+    # -- Default sync interval, unix-ns (GT_SYNC_DEFAULT_INTERVAL_NS). 5 min.
+    defaultIntervalNS: 300000000000
+  scheduler:
+    # -- Scheduler wake-up tick interval, unix-ns (GT_SCHEDULER_TICK_NS). 5 s.
+    tickNS: 5000000000
+  # -- How far past due a sync may be before considered stale, unix-ns
+  # (GT_STALENESS_BUDGET_NS). 1 h.
+  stalenessBudgetNS: 3600000000000
+
+  # Git runner ----------------------------------------------------------------
+  git:
+    # -- Path or name of the git binary (GT_GIT_BIN). The runtime image ships git.
+    bin: git
+    # -- Per-ls-remote deadline, unix-ns (GT_GIT_TIMEOUT_NS). 60 s.
+    timeoutNS: 60000000000
+    # -- Colon-separated git transport schemes to accept (GT_PROTOCOL_ALLOWLIST).
+    protocolAllowlist: https:ssh
+    # -- Colon-separated allowed host patterns (GT_HOST_ALLOWLIST). Empty = all.
+    hostAllowlist: ""
+
+  # -- Structured log level (GT_LOG_LEVEL): debug|info|warn|error. [enum]
+  logLevel: info
+
+  # Cache (verify hot path) ---------------------------------------------------
+  cache:
+    # -- Enable the Otter caching Store decorator (GT_CACHE_ENABLED).
+    enabled: true
+    # -- Max entries per logical cache (GT_CACHE_MAX_ENTRIES).
+    maxEntries: 100000
+    # -- Staleness backstop, unix-ns (GT_CACHE_TTL_NS). 0 disables. 60 s.
+    ttlNS: 60000000000
+
+  # -- Expose /debug/pprof/* on the API listener (GT_PPROF_ENABLED). Keep false
+  # in production; set true only in controlled environments.
+  pprof:
+    enabled: false
+
+# ============================================================================
+# metrics — the dedicated Prometheus listener (GT_METRICS_ADDR). When disabled
+# (default), the app collects/serves NOTHING — there is no /metrics endpoint.
+# ============================================================================
+metrics:
+  # -- Enable the dedicated metrics listener (sets GT_METRICS_ADDR).
+  enabled: false
+  # -- Address the metrics listener binds (GT_METRICS_ADDR value). Must be
+  # 0.0.0.0 in-cluster for the ServiceMonitor/Service to scrape it.
+  addr: 0.0.0.0:9090
+  # -- Container/Service port for metrics. Must match the port in `addr`.
+  port: 9090
+  serviceMonitor:
+    # -- Create a Prometheus-Operator ServiceMonitor (requires metrics.enabled
+    # AND the ServiceMonitor CRD installed in the cluster).
+    enabled: false
+    # -- Scrape interval.
+    interval: 30s
+    # -- Scrape timeout.
+    scrapeTimeout: 10s
+    # -- Extra labels on the ServiceMonitor (e.g. release: kube-prometheus-stack
+    # so the operator selects it).
+    labels: {}
+    # -- Extra annotations on the ServiceMonitor.
+    annotations: {}
+    # -- metricRelabelings applied to scraped samples.
+    metricRelabelings: []
+    # -- relabelings applied before scrape.
+    relabelings: []
+
+# ============================================================================
+# auth — control-plane auth (GT_AUTH_MODE). Gates ONLY the five mutating
+# control endpoints; reads/health are never gated. Credentials themselves live
+# under .secrets (apiKeys/apiKeysSHA256/basicAuth); only the non-secret knobs
+# (mode, jwks url/issuer/audience/algs) are here.
+# ============================================================================
+auth:
+  # -- Auth mode: none|apikey|basic|jwks. [enum] Default "none" reproduces the
+  # loopback/edge-proxy posture. For apikey/basic, set the matching secret value.
+  mode: none
+  jwks:
+    # -- JWKS endpoint URL (GT_JWKS_URL) — required for mode=jwks.
+    url: ""
+    # -- Expected iss claim (GT_JWT_ISSUER) — required for mode=jwks.
+    issuer: ""
+    # -- Expected aud claim (GT_JWT_AUDIENCE) — required for mode=jwks.
+    audience: ""
+    # -- Comma-separated signature-algorithm allowlist (GT_JWT_ALGS).
+    algs: RS256,ES256
+
+# ============================================================================
+# secrets — the FOUR sensitive GT_* values. STRONGLY PREFER `existingSecret`
+# in production: set it to the name of a Secret you manage out-of-band (sealed-
+# secrets / external-secrets / vault) and leave `data` empty, so credentials
+# never live in your values file or Helm release history.
+# ============================================================================
+secrets:
+  # -- Let the chart create the Secret from `data` below. Set false (and provide
+  # existingSecret) to fully manage the Secret yourself.
+  create: true
+  # -- Name of a pre-existing Secret to use instead of creating one. When set,
+  # the chart creates NO Secret and `data` is ignored. The referenced Secret
+  # must contain the relevant GT_* keys (GT_MYSQL_DSN, GT_API_KEYS,
+  # GT_API_KEYS_SHA256, GT_BASIC_AUTH) as needed.
+  existingSecret: ""
+  # !!! DO NOT COMMIT REAL SECRETS HERE. Prefer existingSecret in production. !!!
+  data:
+    # -- MySQL DSN (GT_MYSQL_DSN) — required when config.db.driver=mysql.
+    mysqlDSN: ""
+    # -- Comma-separated raw API keys (GT_API_KEYS) — apikey mode.
+    apiKeys: ""
+    # -- Comma-separated lowercase-hex SHA-256 key digests (GT_API_KEYS_SHA256).
+    apiKeysSHA256: ""
+    # -- Comma-separated user:bcrypt-hash entries (GT_BASIC_AUTH) — basic mode.
+    basicAuth: ""
+
+# ============================================================================
+# persistence — the sqlite data volume. Ignored entirely when
+# config.db.driver=mysql.
+# ============================================================================
+persistence:
+  # -- Provision/mount a PersistentVolume for the sqlite DB. Required for sqlite
+  # durability. Drives the updateStrategy default to Recreate (RWO can't be
+  # dual-attached during a rolling update).
+  enabled: true
+  # -- Mount path for the data volume; config.sqlite.path must live under it.
+  mountPath: /data
+  # -- Requested size.
+  size: 1Gi
+  # -- StorageClass; "" uses the cluster default, "-" disables dynamic provisioning.
+  storageClass: ""
+  # -- Access modes. sqlite is single-writer, so ReadWriteOnce is correct.
+  accessModes:
+    - ReadWriteOnce
+  # -- Use a pre-existing PVC instead of creating one. When set, no PVC is created.
+  existingClaim: ""
+  # -- Extra annotations on the created PVC.
+  annotations: {}
+
+service:
+  # -- Service type.
+  type: ClusterIP
+  # -- Service port for the HTTP API.
+  port: 8080
+  # -- Extra annotations on the Service.
+  annotations: {}
+
+ingress:
+  # -- Create an Ingress for the HTTP API.
+  enabled: false
+  # -- IngressClass name.
+  className: ""
+  # -- Extra annotations on the Ingress.
+  annotations: {}
+  # -- Host rules. Each host: {host, paths:[{path, pathType}]}.
+  hosts:
+    - host: git-taintedd.local
+      paths:
+        - path: /
+          pathType: Prefix
+  # -- TLS config: list of {secretName, hosts:[...]}.
+  tls: []
+
+# -- Container resource requests/limits. The server is lightweight; the floor
+# matters more than the ceiling (it shells out to git per sync).
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# ============================================================================
+# autoscaling — a HorizontalPodAutoscaler. ONLY valid with the mysql driver:
+# sqlite is single-writer so it can't scale out. The HPA template `fail`s when
+# config.db.driver=sqlite (or persistence.enabled) to prevent a footgun.
+# ============================================================================
+autoscaling:
+  # -- Enable the HPA (mysql driver only).
+  enabled: false
+  # -- Minimum replicas.
+  minReplicas: 2
+  # -- Maximum replicas.
+  maxReplicas: 6
+  # -- Target average CPU utilization (%).
+  targetCPUUtilizationPercentage: 70
+  # -- Target average memory utilization (%). 0/unset to disable.
+  targetMemoryUtilizationPercentage: 0
+
+podDisruptionBudget:
+  # -- Create a PodDisruptionBudget.
+  enabled: false
+  # -- Minimum available pods during voluntary disruption. (Set only one of
+  # minAvailable / maxUnavailable.)
+  minAvailable: 1
+  # -- Maximum unavailable pods during voluntary disruption.
+  maxUnavailable: ""
+
+serviceAccount:
+  # -- Create a dedicated ServiceAccount.
+  create: true
+  # -- ServiceAccount name; "" derives from the fullname.
+  name: ""
+  # -- Annotations on the ServiceAccount (e.g. IRSA/Workload-Identity role ARN).
+  annotations: {}
+  # -- Mount the SA token into the pod. The app needs no API access, so false
+  # is a sane hardening default.
+  automountServiceAccountToken: false
+
+# -- Extra pod annotations (merged with the config/secret checksums).
+podAnnotations: {}
+# -- Extra pod labels.
+podLabels: {}
+
+# -- Pod-level security context. fsGroup=10001 makes the PVC group-writable by
+# the non-root uid the image runs as (10001), so sqlite can create its DB file.
+podSecurityContext:
+  fsGroup: 10001
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+
+# -- Container-level security context. The image already runs as uid 10001; this
+# enforces a locked-down, read-only-rootfs, no-new-privileges posture.
+containerSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+# -- Node selector for pod scheduling.
+nodeSelector: {}
+# -- Tolerations for pod scheduling.
+tolerations: []
+# -- Affinity rules for pod scheduling.
+affinity: {}
+# -- topologySpreadConstraints for pod scheduling.
+topologySpreadConstraints: []
+
+# -- updateStrategy. "auto" picks Recreate when persistence.enabled (a RWO PVC
+# can't be dual-attached) else RollingUpdate. Override with an explicit map to
+# pin e.g. RollingUpdate maxSurge/maxUnavailable.
+updateStrategy: auto
+
+# -- Extra environment variables (list of v1.EnvVar) for the main container.
+extraEnv: []
+# -- Extra envFrom sources (list of v1.EnvFromSource), e.g. another configMapRef.
+extraEnvFrom: []
+# -- Extra volumes (list of v1.Volume), e.g. an SSH deploy key Secret.
+extraVolumes: []
+# -- Extra volume mounts (list of v1.VolumeMount), e.g. mount that SSH key at
+# /home/gt/.ssh (remember HOME=/tmp under readOnlyRootFilesystem).
+extraVolumeMounts: []
+
+# ============================================================================
+# probes — liveness uses /healthz, readiness uses /readyz (DB-ping), startup
+# uses /healthz to give a cold DB-migration time before liveness kicks in.
+# All on the named `http` port. Every field is overridable.
+# ============================================================================
+probes:
+  liveness:
+    enabled: true
+    path: /healthz
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
+    successThreshold: 1
+  readiness:
+    enabled: true
+    path: /readyz
+    initialDelaySeconds: 3
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
+    successThreshold: 1
+  startup:
+    enabled: true
+    path: /healthz
+    initialDelaySeconds: 2
+    periodSeconds: 3
+    timeoutSeconds: 2
+    # 30 * 3s = 90s budget for migrations on a cold/large DB before liveness runs.
+    failureThreshold: 30
+    successThreshold: 1
+
+networkPolicy:
+  # -- Create a NetworkPolicy. Default-denies ingress except from the namespaces/
+  # pods you allow, while leaving egress open (the server must reach arbitrary
+  # git remotes + DNS).
+  enabled: false
+  # -- Ingress sources allowed to reach the HTTP/metrics ports. Each entry is a
+  # NetworkPolicyPeer (podSelector/namespaceSelector/ipBlock). Empty list with
+  # enabled=true = deny all ingress.
+  ingressFrom: []
+  # -- Egress policy. By default egress is left unrestricted (the app dials
+  # arbitrary git hosts on 22/443 + DNS + the DB). Set to a list of
+  # NetworkPolicyEgressRule to lock it down.
+  egress: []

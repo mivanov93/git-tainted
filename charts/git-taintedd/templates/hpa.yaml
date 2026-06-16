@@ -1,0 +1,40 @@
+{{- if .Values.autoscaling.enabled }}
+{{- /*
+The HPA is only sound with the mysql driver. sqlite is single-writer (and a
+sqlite deployment is pinned to one PVC-backed pod), so scaling out would corrupt
+the ledger / thrash the lease. Refuse rather than silently misbehave.
+*/ -}}
+{{- if or (eq .Values.config.db.driver "sqlite") .Values.persistence.enabled }}
+{{- fail "autoscaling.enabled requires config.db.driver=mysql and persistence.enabled=false — sqlite is single-writer and cannot scale horizontally." }}
+{{- end }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "git-taintedd.fullname" . }}
+  labels:
+    {{- include "git-taintedd.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "git-taintedd.fullname" . }}
+  minReplicas: {{ .Values.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  metrics:
+    {{- if .Values.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
+    {{- end }}
+    {{- if .Values.autoscaling.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetMemoryUtilizationPercentage }}
+    {{- end }}
+{{- end }}
