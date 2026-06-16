@@ -48,7 +48,7 @@ func remoteFromMySQLRow(r mysqlc.Remote) model.Remote {
 	return m
 }
 
-func refFromMySQLRow(r mysqlc.Ref, algo model.HashAlgo) model.Ref {
+func refFromMySQLRow(r mysqlc.Ref) model.Ref {
 	ref := model.Ref{
 		ID:               model.RefID(r.ID),
 		RemoteID:         model.RemoteID(r.RemoteID),
@@ -62,13 +62,13 @@ func refFromMySQLRow(r mysqlc.Ref, algo model.HashAlgo) model.Ref {
 		ObservationCount: r.ObservationCount,
 	}
 	if raw := bytesFromNullString(r.CurrentOid); len(raw) > 0 {
-		ref.CurrentOID = model.OIDFromRaw(raw, algo)
+		ref.CurrentOID = model.OIDFromRaw(raw)
 	}
 	if raw := bytesFromNullString(r.CurrentPeeledOid); len(raw) > 0 {
-		ref.CurrentPeeledOID = model.OIDFromRaw(raw, algo)
+		ref.CurrentPeeledOID = model.OIDFromRaw(raw)
 	}
 	if raw := bytesFromNullString(r.FirstOid); len(raw) > 0 {
-		ref.FirstOID = model.OIDFromRaw(raw, algo)
+		ref.FirstOID = model.OIDFromRaw(raw)
 	}
 	if r.TaintFirstNs.Valid {
 		v := r.TaintFirstNs.Int64
@@ -91,10 +91,10 @@ func taintEventFromMySQLRow(r mysqlc.TaintEvent) model.TaintEvent {
 		e.ObservationID = &v
 	}
 	if raw := bytesFromNullString(r.FromOid); len(raw) > 0 {
-		e.FromOID = model.OIDFromRaw(raw, model.SHA1)
+		e.FromOID = model.OIDFromRaw(raw)
 	}
 	if raw := bytesFromNullString(r.ToOid); len(raw) > 0 {
-		e.ToOID = model.OIDFromRaw(raw, model.SHA1)
+		e.ToOID = model.OIDFromRaw(raw)
 	}
 	if r.AckedAtNs.Valid {
 		v := r.AckedAtNs.Int64

@@ -40,7 +40,7 @@ func remoteFromRow(r sqlc.Remote) (model.Remote, error) {
 
 // ---- Refs ------------------------------------------------------------------
 
-func refFromRow(r sqlc.Ref, algo model.HashAlgo) (model.Ref, error) {
+func refFromRow(r sqlc.Ref) (model.Ref, error) {
 	ref := model.Ref{
 		ID:               model.RefID(r.ID),
 		RemoteID:         model.RemoteID(r.RemoteID),
@@ -55,17 +55,17 @@ func refFromRow(r sqlc.Ref, algo model.HashAlgo) (model.Ref, error) {
 	}
 	if r.CurrentOid != nil {
 		if raw := toBytes(r.CurrentOid); len(raw) > 0 {
-			ref.CurrentOID = model.OIDFromRaw(raw, algo)
+			ref.CurrentOID = model.OIDFromRaw(raw)
 		}
 	}
 	if r.CurrentPeeledOid != nil {
 		if raw := toBytes(r.CurrentPeeledOid); len(raw) > 0 {
-			ref.CurrentPeeledOID = model.OIDFromRaw(raw, algo)
+			ref.CurrentPeeledOID = model.OIDFromRaw(raw)
 		}
 	}
 	if r.FirstOid != nil {
 		if raw := toBytes(r.FirstOid); len(raw) > 0 {
-			ref.FirstOID = model.OIDFromRaw(raw, algo)
+			ref.FirstOID = model.OIDFromRaw(raw)
 		}
 	}
 	if r.TaintFirstNs != nil {
@@ -91,10 +91,10 @@ func taintEventFromRow(r sqlc.TaintEvent) model.TaintEvent {
 		e.ObservationID = &v
 	}
 	if r.FromOid != nil {
-		e.FromOID = model.OIDFromRaw(toBytes(r.FromOid), model.SHA1)
+		e.FromOID = model.OIDFromRaw(toBytes(r.FromOid))
 	}
 	if r.ToOid != nil {
-		e.ToOID = model.OIDFromRaw(toBytes(r.ToOid), model.SHA1)
+		e.ToOID = model.OIDFromRaw(toBytes(r.ToOid))
 	}
 	if r.AckedAtNs != nil {
 		v := toInt64(r.AckedAtNs)

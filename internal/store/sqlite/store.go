@@ -239,7 +239,7 @@ func (s *sqliteStore) GetRef(ctx context.Context, remoteID model.RemoteID, tagNa
 		}
 		return nil, fmt.Errorf("GetRef: %w", err)
 	}
-	ref, err := refFromRow(row, model.SHA1)
+	ref, err := refFromRow(row)
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +253,7 @@ func (s *sqliteStore) ListTags(ctx context.Context, remoteID model.RemoteID) ([]
 	}
 	out := make([]model.Ref, 0, len(rawRows))
 	for _, r := range rawRows {
-		ref, err := refFromRow(r, model.SHA1)
+		ref, err := refFromRow(r)
 		if err != nil {
 			return nil, err
 		}
@@ -326,16 +326,16 @@ func (s *sqliteStore) ReplayObservations(ctx context.Context, remoteID model.Rem
 			RowHash:      r.RowHash,
 		}
 		if b := toBytes(r.PrevOid); len(b) > 0 {
-			obs.PrevOID = model.OIDFromRaw(b, model.SHA1)
+			obs.PrevOID = model.OIDFromRaw(b)
 		}
 		if b := toBytes(r.NewOid); len(b) > 0 {
-			obs.NewOID = model.OIDFromRaw(b, model.SHA1)
+			obs.NewOID = model.OIDFromRaw(b)
 		}
 		if b := toBytes(r.PrevPeeledOid); len(b) > 0 {
-			obs.PrevPeeledOID = model.OIDFromRaw(b, model.SHA1)
+			obs.PrevPeeledOID = model.OIDFromRaw(b)
 		}
 		if b := toBytes(r.NewPeeledOid); len(b) > 0 {
-			obs.NewPeeledOID = model.OIDFromRaw(b, model.SHA1)
+			obs.NewPeeledOID = model.OIDFromRaw(b)
 		}
 		if r.CanonicalMeta != nil {
 			obs.CanonicalMeta = toString(r.CanonicalMeta)

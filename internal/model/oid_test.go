@@ -19,7 +19,7 @@ func TestHashAlgoWidths(t *testing.T) {
 }
 
 func TestParseOID(t *testing.T) {
-	const sha1Hex = "0123456789abcdef0123456789abcdef01234567"                         // 40
+	const sha1Hex = "0123456789abcdef0123456789abcdef01234567"                           // 40
 	const sha256Hex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" // 64
 
 	tests := []struct {
@@ -78,11 +78,32 @@ func TestOIDEqualAndZero(t *testing.T) {
 	if a.Equal(z) {
 		t.Errorf("nonzero must not equal zero")
 	}
-	// cross-algo inequality even if raw bytes coincide in length is impossible
-	// here (20 vs 32), but algo must participate:
-	d := OIDFromRaw(a.Raw, SHA256)
+	// Equal is algo-sensitive: same raw bytes, different algo must not be Equal.
+	// (Constructed directly — OIDFromRaw now infers the algo from width, so it
+	// can't produce a mislabelled oid.)
+	d := OID{Raw: a.Raw, Algo: SHA256}
 	if a.Equal(d) {
 		t.Errorf("same raw, different algo must not be Equal")
+	}
+}
+
+func TestOIDFromRawInfersAlgo(t *testing.T) {
+	if got := OIDFromRaw(make([]byte, 20)).Algo; got != SHA1 {
+		t.Errorf("20-byte raw → algo %q, want sha1", got)
+	}
+	if got := OIDFromRaw(make([]byte, 32)).Algo; got != SHA256 {
+		t.Errorf("32-byte raw → algo %q, want sha256", got)
+	}
+	if got := OIDFromRaw(make([]byte, 16)).Algo; got != "" {
+		t.Errorf("unknown-width raw → algo %q, want empty", got)
+	}
+	// A sha256 raw round-trips with the right algo, so OID.Equal holds across a
+	// store boundary — regression for the sha1-hard-coded decode that false-tainted
+	// every unchanged sha256 tag.
+	raw := make([]byte, 32)
+	raw[0] = 0xab
+	if want := (OID{Raw: raw, Algo: SHA256}); !OIDFromRaw(raw).Equal(want) {
+		t.Errorf("OIDFromRaw(32-byte raw) must Equal the same bytes labelled sha256")
 	}
 }
 
