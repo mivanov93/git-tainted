@@ -1,8 +1,9 @@
 # Release — runs on a pushed semver tag (vX.Y.Z). Publishes:
 #   - the multi-arch server image to Docker Hub (mivanov93/git-taintedd), signed
 #     keylessly with cosign, with SBOM + provenance attestations;
-#   - the git-tainted + git-tainted-ctl client binaries (linux/darwin × amd64/arm64)
-#     as version-stamped tar.gz + a SHA256SUMS file;
+#   - all three binaries — git-tainted, git-tainted-ctl, and the git-taintedd
+#     server (linux/darwin × amd64/arm64) — as version-stamped tar.gz + a
+#     SHA256SUMS file;
 #   - the Helm chart to GHCR OCI (oci://ghcr.io/mivanov93/charts) and as a
 #     GitHub Release asset;
 #   - a GitHub Release with generated notes and all the above attached.
@@ -94,7 +95,7 @@ jobs:
         run: cosign sign --yes "${IMAGE}@${DIGEST}"
 
   binaries:
-    name: binaries (client CLIs)
+    name: binaries (CLIs + server)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -108,8 +109,9 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # Cross-compile both client CLIs (NOT the server — that ships as the image)
-      # for linux/darwin × amd64/arm64, version-stamped, tar.gz'd, with checksums.
+      # Cross-compile all three binaries — the two client CLIs plus the server
+      # (which ALSO ships as the container image) — for linux/darwin ×
+      # amd64/arm64, version-stamped, tar.gz'd, with checksums.
       - name: Build release binaries
         env:
           VERSION: ${{ github.ref_name }}
@@ -120,7 +122,7 @@ jobs:
           mkdir -p "${OUT}"
           for os in linux darwin; do
             for arch in amd64 arm64; do
-              for cmd in git-tainted git-tainted-ctl; do
+              for cmd in git-tainted git-tainted-ctl git-taintedd; do
                 bindir="${OUT}/${cmd}_${VERSION}_${os}_${arch}"
                 mkdir -p "${bindir}"
                 echo "building ${cmd} ${os}/${arch}"
