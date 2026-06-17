@@ -280,6 +280,9 @@ func (s *StrictServerImpl) ListTags(ctx context.Context, req oapi.ListTagsReques
 		}
 		return nil, err
 	}
+	if req.Params.Q != nil && len(*req.Params.Q) > maxGlobLen {
+		return oapi.ListTags422JSONResponse(oapi.Error{Error: "q exceeds 256 bytes"}), nil
+	}
 
 	refs, err := s.store.ListTags(ctx, model.RemoteID(req.RemoteId))
 	if err != nil {
@@ -349,6 +352,9 @@ func (s *StrictServerImpl) GetTag(ctx context.Context, req oapi.GetTagRequestObj
 		}
 		return nil, err
 	}
+	if !validTagName(req.TagName) {
+		return oapi.GetTag404JSONResponse(oapi.Error{Error: "tag not found"}), nil
+	}
 	ref, err := s.store.GetRef(ctx, model.RemoteID(req.RemoteId), req.TagName)
 	if err != nil {
 		if errors.Is(err, model.ErrNotFound) {
@@ -417,6 +423,9 @@ func (s *StrictServerImpl) AckTaintEvent(ctx context.Context, req oapi.AckTaintE
 	if req.Body != nil && req.Body.AckNote != nil {
 		note = *req.Body.AckNote
 	}
+	if len(ackedBy) > maxAckedByLen || len(note) > maxAckNoteLen {
+		return oapi.AckTaintEvent422JSONResponse(oapi.Error{Error: "acked_by must be <=256 and ack_note <=2048 bytes"}), nil
+	}
 	if err := s.store.AckTaintEvent(ctx, req.EventId, ackedBy, note, s.clock.NowNS()); err != nil {
 		if errors.Is(err, model.ErrNotFound) {
 			return oapi.AckTaintEvent404JSONResponse(oapi.Error{Error: "taint event not found"}), nil
@@ -434,6 +443,30 @@ func (s *StrictServerImpl) AckTaintEvent(ctx context.Context, req oapi.AckTaintE
 
 // ---- Verify ----------------------------------------------------------------
 
+// Inline request limits mirroring the OpenAPI request-schema constraints
+// (oapi-codegen does not enforce maxLength/pattern, so the handlers do).
+const (
+	maxRemoteParamLen = 2048
+	maxTagNameLen     = 255
+	maxAckedByLen     = 256
+	maxAckNoteLen     = 2048
+	maxGlobLen        = 256
+)
+
+// validTagName mirrors the OpenAPI tag/tagName constraints: non-empty, <=255 bytes,
+// no control chars or spaces (<=0x20 or 0x7f), and a short name (not a refs/... ref).
+func validTagName(s string) bool {
+	if s == "" || len(s) > maxTagNameLen || strings.HasPrefix(s, "refs/") {
+		return false
+	}
+	for _, r := range s {
+		if r <= 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
 // reOID accepts 40-hex or 64-hex lowercase.
 var reOID = regexp.MustCompile(`^[0-9a-f]{40}$|^[0-9a-f]{64}$`)
 
@@ -441,9 +474,12 @@ var reOID = regexp.MustCompile(`^[0-9a-f]{40}$|^[0-9a-f]{64}$`)
 func (s *StrictServerImpl) Verify(ctx context.Context, req oapi.VerifyRequestObject) (oapi.VerifyResponseObject, error) {
 	p := req.Params
 
-	// Validate tag name (short name only, no refs/... prefix, no control chars).
-	if strings.HasPrefix(p.Tag, "refs/") || strings.ContainsAny(p.Tag, "\x00\n") || p.Tag == "" {
+	// Validate tag name: short name only, no refs/... prefix, no control chars/spaces, <=255.
+	if !validTagName(p.Tag) {
 		return oapi.Verify422JSONResponse(oapi.Error{Error: "invalid tag name"}), nil
+	}
+	if len(p.Remote) > maxRemoteParamLen {
+		return oapi.Verify422JSONResponse(oapi.Error{Error: "remote exceeds 2048 bytes"}), nil
 	}
 
 	// Validate commit OID if provided.
