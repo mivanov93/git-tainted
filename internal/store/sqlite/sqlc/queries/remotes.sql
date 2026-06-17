@@ -12,6 +12,11 @@ INSERT INTO remotes (
 )
 RETURNING *;
 
+-- name: CountAllRemotes :one
+-- Counts ALL remotes rows including soft-deleted (removed_at_ns set). The seed
+-- first-time guard adopts only when this is zero (spec sec.5 / sec.4.5 step 0).
+SELECT COUNT(*) FROM remotes;
+
 -- name: GetRemote :one
 SELECT * FROM remotes WHERE id = ? LIMIT 1;
 

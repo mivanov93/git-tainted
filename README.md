@@ -201,10 +201,39 @@ git-tainted detects oid changes observable **between polls**, per remote. It **c
 
 - **Within-interval transient tamper** — a tag moved and restored to the same oid
   between two polls is invisible. Mitigate with shorter / jittered sync intervals.
-- **Trust-on-first-observation** — the first oid recorded for a tag is taken as truth;
-  there is no cross-remote corroboration.
+- **Trust-on-first-observation** — the first oid recorded for a tag is taken as truth.
+  A fresh server can inherit an older fleet's baseline via **seed-on-bootstrap** (below);
+  ongoing corroboration is the verify CLI's query-time multi-server quorum.
 - **SHA-1 probabilistic immutability** — for sha1 repos `oid = content` is probabilistic;
   prefer sha256 upstreams.
+
+### Seed-on-bootstrap (peer seeding)
+
+A fresh server can **bootstrap its baseline from peer git-tainted servers** instead of
+starting blind — set `GT_SEED_SERVERS` and, on an empty `remotes` table, it adopts the
+peers' remotes, current tag projections, and taint history under a configurable
+**quorum** (`GT_SEED_QUORUM`, default 1), then rebuilds its own tamper-evident chain.
+This shifts trust-on-first-observation from the new server's own `ls-remote` to the
+seed peers. Honest bounds:
+
+- **`N=1` fully trusts the single peer** — you inherit its blind spots and any pre-seed
+  tamper it already trusted.
+- **Quorum assumes the peers are independent.** `GT_SEED_QUORUM=N` requires ≥N listed
+  peers to agree before adopting a fact, but it counts distinct **URLs**, not distinct
+  operators — N colluding or sybil peers behind different names defeat it. The config
+  cannot enforce independence; choose genuinely independent seeds.
+- **Disagreement is a coverage-denial lever.** A tag whose peers disagree (no value
+  reaches N) is **quarantined** (not adopted) — the safe choice, but a minority that
+  deliberately disagrees on many tags can force them untracked. Every quarantine is
+  logged per-tag with the disagreeing oids.
+- **Taint adoption is quorum-gated** — a tag is seeded tainted only if ≥N peers agree
+  (one malicious peer cannot inject a permanent taint).
+- Seeding never weakens detection **going forward**: the rebuilt chain is tamper-evident
+  and this server's own `ls-remote` syncs continue normally; a quarantined or unseeded
+  tag simply reverts to trust-on-first-observation from this server's first live sync.
+- **Annotated-tag fidelity gap:** the wire has no historical peeled oid, so for an
+  annotated tag that already changed, the genesis observation's *historical* peeled oid
+  is best-effort/empty; the **current** peeled oid (what `verify` needs) is preserved.
 
 ## API
 

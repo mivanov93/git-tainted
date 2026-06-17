@@ -406,6 +406,11 @@ type captureTx struct {
 	cs      *cachingStore
 	inner   model.Tx
 	touched map[model.RemoteID]struct{}
+	// createdRemote records that the txn added at least one remote, so flush()
+	// bumps the remote-SET generation on commit (membership changed) — mirroring
+	// the top-level cache.CreateRemote. A brand-new remote has nothing cached, so
+	// no per-remote generation bump is needed (only the URL→ID index must refresh).
+	createdRemote bool
 }
 
 func (t *captureTx) mark(id model.RemoteID) {
@@ -415,10 +420,15 @@ func (t *captureTx) mark(id model.RemoteID) {
 	t.touched[id] = struct{}{}
 }
 
-// flush bumps every recorded remote's generation. Called only on commit.
+// flush bumps every recorded remote's generation. Called only on commit. If the
+// txn created a remote, it also bumps the remote-SET generation so a stale URL→ID
+// resolution cannot survive the membership change (mirrors cache.CreateRemote).
 func (t *captureTx) flush() {
 	for id := range t.touched {
 		t.cs.bump(id)
+	}
+	if t.createdRemote {
+		t.cs.setGen.Add(1)
 	}
 }
 
@@ -451,6 +461,22 @@ func (t *captureTx) AdvanceChainHead(ctx context.Context, remoteID model.RemoteI
 func (t *captureTx) AppendTaintEvent(ctx context.Context, e *model.TaintEvent) (int64, error) {
 	t.mark(e.RemoteID)
 	return t.inner.AppendTaintEvent(ctx, e) //nolint:wrapcheck // transparent delegation
+}
+
+func (t *captureTx) CreateRemote(ctx context.Context, r *model.Remote) (model.RemoteID, error) {
+	id, err := t.inner.CreateRemote(ctx, r)
+	if err != nil {
+		return id, err //nolint:wrapcheck // transparent delegation: preserve store sentinels (ErrConflict)
+	}
+	// Membership changed → flush() bumps the remote-SET generation on commit. A new
+	// remote has nothing cached, so no per-remote gen bump is taken (spec §4.5).
+	t.createdRemote = true
+	return id, nil
+}
+
+func (t *captureTx) CountAllRemotes(ctx context.Context) (int64, error) {
+	// Pure read on the txn's connection; nothing to invalidate.
+	return t.inner.CountAllRemotes(ctx) //nolint:wrapcheck // transparent delegation
 }
 
 // Compile-time proof the capturing Tx satisfies model.Tx.

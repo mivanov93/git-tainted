@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -70,6 +71,29 @@ type Config struct {
 	JWTIssuer   string // expected iss (required for jwks)
 	JWTAudience string // expected aud (required for jwks)
 	JWTAlgs     string // comma-separated signature-algorithm allowlist (default RS256,ES256)
+
+	// ---- Seed-on-bootstrap (peer seeding) — design spec §3 -----------------
+	// When SeedServers is non-empty AND the local remotes table is empty, the
+	// server bootstraps itself from these peer git-tainted servers (adopting their
+	// remotes, tag projections, and taint history under a quorum) instead of
+	// starting blind. See internal/seed.
+	SeedServers string // comma/space-separated peer base URLs; empty ⇒ feature off
+	// SeedQuorum is the minimum number of peers that must agree to adopt a fact.
+	SeedQuorum int
+	// SeedRemotes is an optional comma-separated glob allowlist on adopted remote URLs.
+	SeedRemotes string
+	// SeedConcurrency bounds the in-flight peer HTTP request fan-out.
+	SeedConcurrency int
+	// SeedTimeout is the per-request HTTP deadline (env GT_SEED_TIMEOUT_NS, int64-ns).
+	SeedTimeout time.Duration
+	// SeedInsecure allows plaintext http:// to non-loopback peers (mirrors the CLI guard).
+	SeedInsecure bool
+	// SeedMaxRemotes is the fail-loud ceiling on remotes in the single seed transaction.
+	SeedMaxRemotes int
+	// SeedMaxObservations is the fail-loud ceiling on total observations in the txn.
+	SeedMaxObservations int
+	// SeedMaxPages is the per-resource pagination safety bound.
+	SeedMaxPages int
 }
 
 // Lookup resolves an env key to its value and presence, mirroring os.LookupEnv.
@@ -156,6 +180,11 @@ func Load(get Lookup) (*Config, error) {
 		JWTIssuer:     str("GT_JWT_ISSUER", ""),
 		JWTAudience:   str("GT_JWT_AUDIENCE", ""),
 		JWTAlgs:       str("GT_JWT_ALGS", "RS256,ES256"),
+
+		// Seed-on-bootstrap (peer seeding — spec §3). Off by default (no servers).
+		SeedServers:  str("GT_SEED_SERVERS", ""),
+		SeedRemotes:  str("GT_SEED_REMOTES", ""),
+		SeedInsecure: boolean("GT_SEED_INSECURE", false),
 	}
 
 	var err error
@@ -181,10 +210,51 @@ func Load(get Lookup) (*Config, error) {
 		return nil, err
 	}
 
+	// Seed-on-bootstrap (spec §3) numeric/duration keys.
+	if c.SeedQuorum, err = iInt("GT_SEED_QUORUM", 1); err != nil {
+		return nil, err
+	}
+	if c.SeedConcurrency, err = iInt("GT_SEED_CONCURRENCY", 8); err != nil {
+		return nil, err
+	}
+	if c.SeedTimeout, err = dur("GT_SEED_TIMEOUT_NS", 30*time.Second); err != nil {
+		return nil, err
+	}
+	if c.SeedMaxRemotes, err = iInt("GT_SEED_MAX_REMOTES", 5000); err != nil {
+		return nil, err
+	}
+	if c.SeedMaxObservations, err = iInt("GT_SEED_MAX_OBSERVATIONS", 200_000); err != nil {
+		return nil, err
+	}
+	if c.SeedMaxPages, err = iInt("GT_SEED_MAX_PAGES", 10_000); err != nil {
+		return nil, err
+	}
+
 	if err := c.validate(); err != nil {
 		return nil, err
 	}
 	return c, nil
+}
+
+// SeedEnabled reports whether seed-on-bootstrap is configured (at least one peer
+// server is listed). Whether it actually runs additionally depends on the local
+// remotes table being empty (checked by the Seeder, spec §5).
+func (c *Config) SeedEnabled() bool { return len(seedServerList(c.SeedServers)) > 0 }
+
+// seedServerList splits a comma/space-separated peer URL list, dropping empties.
+// Shared by SeedEnabled, validate, and the Seeder so they agree on the count.
+func seedServerList(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' })
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func (c *Config) validate() error {
@@ -228,6 +298,29 @@ func (c *Config) validate() error {
 		// reject an unknown mode value.
 	default:
 		return fmt.Errorf("%w: GT_AUTH_MODE=%q unsupported (want none, apikey, basic, or jwks)", ErrConfig, c.AuthMode)
+	}
+
+	// Seed-on-bootstrap validation (spec §3). Only the quorum-vs-server-count
+	// constraint is gated on servers being set; the rest are always-on bounds.
+	if servers := seedServerList(c.SeedServers); len(servers) > 0 {
+		if c.SeedQuorum < 1 {
+			return fmt.Errorf("%w: GT_SEED_QUORUM=%d must be >= 1", ErrConfig, c.SeedQuorum)
+		}
+		if c.SeedQuorum > len(servers) {
+			return fmt.Errorf("%w: GT_SEED_QUORUM=%d exceeds the %d configured GT_SEED_SERVERS (no fact could ever be adopted)", ErrConfig, c.SeedQuorum, len(servers))
+		}
+	}
+	if c.SeedConcurrency < 1 {
+		return fmt.Errorf("%w: GT_SEED_CONCURRENCY=%d must be >= 1", ErrConfig, c.SeedConcurrency)
+	}
+	if c.SeedMaxRemotes < 1 {
+		return fmt.Errorf("%w: GT_SEED_MAX_REMOTES=%d must be >= 1", ErrConfig, c.SeedMaxRemotes)
+	}
+	if c.SeedMaxObservations < 1 {
+		return fmt.Errorf("%w: GT_SEED_MAX_OBSERVATIONS=%d must be >= 1", ErrConfig, c.SeedMaxObservations)
+	}
+	if c.SeedMaxPages < 1 {
+		return fmt.Errorf("%w: GT_SEED_MAX_PAGES=%d must be >= 1", ErrConfig, c.SeedMaxPages)
 	}
 	return nil
 }

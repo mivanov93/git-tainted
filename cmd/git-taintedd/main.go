@@ -23,6 +23,7 @@ import (
 	"github.com/mivanov93/git-tainted/internal/git"
 	"github.com/mivanov93/git-tainted/internal/lock"
 	"github.com/mivanov93/git-tainted/internal/model"
+	"github.com/mivanov93/git-tainted/internal/seed"
 	"github.com/mivanov93/git-tainted/internal/store/cache"
 	"github.com/mivanov93/git-tainted/internal/store/mysql"
 	"github.com/mivanov93/git-tainted/internal/store/sqlite"
@@ -149,6 +150,30 @@ Environment variables (all GT_*):
   GT_JWT_ALGS                  jwks mode: comma-separated signature-algorithm
                                allowlist (default: RS256,ES256). "none" and all
                                HS* algorithms are always rejected.
+
+  Seed-on-bootstrap (peer seeding)
+  --------------------------------
+  When GT_SEED_SERVERS is set AND this server's remotes table is EMPTY, the server
+  bootstraps its baseline from one or more peer git-tainted servers (adopting their
+  remotes, current tag projections, and taint history) instead of starting blind.
+  It reuses the peers' open read endpoints (no credentials), rebuilds its own
+  hash-chain, and commits the whole import in ONE transaction (a crash rolls back
+  so the next boot re-seeds cleanly). Best-effort: a failure starts the server
+  empty, never aborting startup.
+
+  GT_SEED_SERVERS              Comma/space-separated peer base URLs.
+                               Empty (default) = seeding DISABLED.
+  GT_SEED_QUORUM               Min peers that must AGREE to adopt a remote/tag fact
+                               (default: 1). 1 = trust a single peer; N>1 = require
+                               corroboration. Must be <= the number of servers.
+  GT_SEED_REMOTES              Optional comma-separated glob allowlist on adopted
+                               remote URLs (default: all).
+  GT_SEED_CONCURRENCY          Max in-flight peer HTTP requests        (default: 8)
+  GT_SEED_TIMEOUT_NS           Per-request HTTP deadline in ns         (default: 30000000000 = 30 s)
+  GT_SEED_INSECURE             Allow plaintext http:// to non-loopback peers (default: false)
+  GT_SEED_MAX_REMOTES          Fail-loud ceiling on remotes in the seed txn (default: 5000)
+  GT_SEED_MAX_OBSERVATIONS     Fail-loud ceiling on total observations      (default: 200000)
+  GT_SEED_MAX_PAGES            Per-resource pagination safety bound         (default: 10000)
 `
 
 // wallClock is the real time implementation of model.Clock.
@@ -292,6 +317,19 @@ func run() error {
 	// ---- Signal context -------------------------------------------------------
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// ---- Seed-on-bootstrap (peer seeding — seed spec §4.2) --------------------
+	// Run BEFORE both the scheduler goroutine and the HTTP listener start, so no
+	// concurrent POST /v1/remotes races the seed (an in-txn zero-rows guard backs
+	// this up). NO-OP when GT_SEED_SERVERS is unset or the remotes table is
+	// non-empty. Best-effort: a failure logs and the server starts empty, never
+	// aborting startup. Writes flow through the same cached Store (empty at boot).
+	if cfg.SeedEnabled() {
+		seedClient := &http.Client{} // per-request timeout applied by the Seeder
+		if err := seed.New(seedClient, cached, cfg, clk, log).Run(ctx); err != nil {
+			log.Error("seed bootstrap failed", "err", err) // non-fatal
+		}
+	}
 
 	// ---- Scheduler ------------------------------------------------------------
 	sched := tlsync.NewScheduler(cached, syncer, clk, log, cfg.SchedulerTick, cfg.SyncConcurrency)
