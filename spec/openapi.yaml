@@ -44,16 +44,16 @@ components:
       type: object
       required: [url, transport]
       properties:
-        url:                   { type: string }
+        url:                   { type: string, minLength: 1, maxLength: 2048 }
         transport:             { type: string, enum: [https, ssh] }
-        sync_interval_ns:      { type: integer, format: int64 }
-        staleness_budget_ns:   { type: integer, format: int64 }
+        sync_interval_ns:      { type: integer, format: int64, minimum: 0 }
+        staleness_budget_ns:   { type: integer, format: int64, minimum: 0 }
         taint_any_tag_deletion: { type: boolean, default: true }
     UpdateRemoteRequest:
       type: object
       properties:
-        sync_interval_ns:      { type: integer, format: int64 }
-        staleness_budget_ns:   { type: integer, format: int64 }
+        sync_interval_ns:      { type: integer, format: int64, minimum: 0 }
+        staleness_budget_ns:   { type: integer, format: int64, minimum: 0 }
         taint_any_tag_deletion: { type: boolean }
         status:                { type: string, enum: [active, degraded, paused] }
     RemoteList:
@@ -113,8 +113,8 @@ components:
       type: object
       required: [acked_by]
       properties:
-        acked_by:  { type: string }
-        ack_note:  { type: string }
+        acked_by:  { type: string, minLength: 1, maxLength: 256 }
+        ack_note:  { type: string, maxLength: 2048 }
     VerifyResponse:
       type: object
       required: [status, confidence, tag]
@@ -194,13 +194,13 @@ paths:
         - name: url
           in: query
           description: Resolve a normalized URL to its remote (exact match).
-          schema: { type: string }
+          schema: { type: string, minLength: 1, maxLength: 2048 }
         - name: limit
           in: query
-          schema: { type: integer, default: 100 }
+          schema: { type: integer, default: 100, minimum: 1, maximum: 1000 }
         - name: cursor
           in: query
-          schema: { type: integer, format: int64, default: 0 }
+          schema: { type: integer, format: int64, default: 0, minimum: 0 }
       responses:
         "200":
           description: remote list
@@ -236,7 +236,7 @@ paths:
       - name: remoteId
         in: path
         required: true
-        schema: { type: integer, format: int64 }
+        schema: { type: integer, format: int64, minimum: 1 }
     get:
       operationId: getRemote
       summary: Get one remote by id.
@@ -286,7 +286,7 @@ paths:
       - name: remoteId
         in: path
         required: true
-        schema: { type: integer, format: int64 }
+        schema: { type: integer, format: int64, minimum: 1 }
     post:
       operationId: triggerSync
       summary: Trigger an on-demand sync for a remote (202 Accepted).
@@ -303,17 +303,17 @@ paths:
       - name: remoteId
         in: path
         required: true
-        schema: { type: integer, format: int64 }
+        schema: { type: integer, format: int64, minimum: 1 }
     get:
       operationId: listSyncs
       summary: List sync audit rows for a remote (paginated).
       parameters:
         - name: limit
           in: query
-          schema: { type: integer, default: 100 }
+          schema: { type: integer, default: 100, minimum: 1, maximum: 1000 }
         - name: cursor
           in: query
-          schema: { type: integer, format: int64, default: 0 }
+          schema: { type: integer, format: int64, default: 0, minimum: 0 }
       responses:
         "200":
           description: sync list
@@ -330,7 +330,7 @@ paths:
       - name: remoteId
         in: path
         required: true
-        schema: { type: integer, format: int64 }
+        schema: { type: integer, format: int64, minimum: 1 }
     get:
       operationId: listTags
       summary: List tag projections for a remote.
@@ -338,23 +338,28 @@ paths:
         - name: q
           in: query
           description: Glob pattern for tag name filter (default = all).
-          schema: { type: string }
+          schema: { type: string, maxLength: 256 }
         - name: tainted
           in: query
           description: Filter by taint status.
           schema: { type: string, enum: [any, only, never], default: any }
         - name: limit
           in: query
-          schema: { type: integer, default: 100 }
+          schema: { type: integer, default: 100, minimum: 1, maximum: 1000 }
         - name: cursor
           in: query
-          schema: { type: integer, format: int64, default: 0 }
+          schema: { type: integer, format: int64, default: 0, minimum: 0 }
       responses:
         "200":
           description: tag list
           content:
             application/json:
               schema: { $ref: '#/components/schemas/TagList' }
+        "422":
+          description: invalid request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         "404":
           description: not found
           content:
@@ -365,11 +370,11 @@ paths:
       - name: remoteId
         in: path
         required: true
-        schema: { type: integer, format: int64 }
+        schema: { type: integer, format: int64, minimum: 1 }
       - name: tagName
         in: path
         required: true
-        schema: { type: string }
+        schema: { type: string, minLength: 1, maxLength: 255, pattern: '^[^\x00-\x20\x7f]+$' }
     get:
       operationId: getTag
       summary: Get a single tag projection by name.
@@ -389,17 +394,17 @@ paths:
       - name: remoteId
         in: path
         required: true
-        schema: { type: integer, format: int64 }
+        schema: { type: integer, format: int64, minimum: 1 }
     get:
       operationId: listTaintEvents
       summary: List taint events for a remote (paginated).
       parameters:
         - name: limit
           in: query
-          schema: { type: integer, default: 100 }
+          schema: { type: integer, default: 100, minimum: 1, maximum: 1000 }
         - name: cursor
           in: query
-          schema: { type: integer, format: int64, default: 0 }
+          schema: { type: integer, format: int64, default: 0, minimum: 0 }
       responses:
         "200":
           description: taint event list
@@ -416,11 +421,11 @@ paths:
       - name: remoteId
         in: path
         required: true
-        schema: { type: integer, format: int64 }
+        schema: { type: integer, format: int64, minimum: 1 }
       - name: eventId
         in: path
         required: true
-        schema: { type: integer, format: int64 }
+        schema: { type: integer, format: int64, minimum: 1 }
     post:
       operationId: ackTaintEvent
       summary: Annotate a taint event as acknowledged (append-only; does not clear taint).
@@ -432,6 +437,11 @@ paths:
       responses:
         "204":
           description: acknowledged
+        "422":
+          description: invalid request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         "404":
           description: not found
           content:
@@ -451,15 +461,15 @@ paths:
           in: query
           description: Normalized URL or remote id.
           required: true
-          schema: { type: string }
+          schema: { type: string, minLength: 1, maxLength: 2048 }
         - name: tag
           in: query
           required: true
-          schema: { type: string }
+          schema: { type: string, minLength: 1, maxLength: 255, pattern: '^[^\x00-\x20\x7f]+$' }
         - name: commit
           in: query
           description: Expected peeled commit oid (hex, 40 or 64 chars). Optional.
-          schema: { type: string }
+          schema: { type: string, maxLength: 64, pattern: '^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$' }
       responses:
         "200":
           description: verify result (always 200 for logical verdicts)

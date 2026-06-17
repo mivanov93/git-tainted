@@ -3,6 +3,8 @@
 [![Release](https://img.shields.io/github/v/release/mivanov93/git-tainted?sort=semver)](https://github.com/mivanov93/git-tainted/releases/latest)
 [![CI](https://github.com/mivanov93/git-tainted/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/mivanov93/git-tainted/actions/workflows/ci.yml)
 [![Renovate](https://github.com/mivanov93/git-tainted/actions/workflows/renovate.yml/badge.svg)](https://github.com/mivanov93/git-tainted/actions/workflows/renovate.yml)
+[![Docker image](https://img.shields.io/docker/v/mivanov93/git-taintedd?sort=semver&logo=docker&label=docker%20image)](https://hub.docker.com/r/mivanov93/git-taintedd)
+[![License](https://img.shields.io/badge/license-BUSL--1.1-blue.svg)](LICENSE)
 
 Tamper-evidence for git **tags**. A tag is supposed to be an immutable pointer — if
 the commit a tag resolves to ever changes after it was first seen, that's a tamper or
