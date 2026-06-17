@@ -355,8 +355,6 @@ make build      # both static CGO-free binaries → bin/
 make e2e        # full register → sync → verify → tamper flow over a local git server
 ```
 
-(authentication, admin CLI, verify cache).
-
 ## License
 
 [Business Source License 1.1](LICENSE) — Licensor: Mihail Ivanov. You may use and

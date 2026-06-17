@@ -28,3 +28,6 @@
 
 # Agent worktrees (transient; created by isolated sub-agents)
 /.claude/
+
+# Skill design specs — kept locally for reference, never tracked
+docs/superpowers/

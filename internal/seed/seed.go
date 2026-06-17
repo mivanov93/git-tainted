@@ -4,7 +4,7 @@
 // current tag projections, and taint history under a configurable quorum — then
 // rebuilds its own local hash-chain from the imported facts. It reuses the peers'
 // existing open read endpoints (no new endpoint) and writes the whole result in
-// ONE atomic transaction (all-or-nothing). See
+// ONE atomic transaction (all-or-nothing).
 package seed
 
 import (
