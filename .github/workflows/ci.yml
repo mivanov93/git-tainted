@@ -43,6 +43,18 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # golangci-lint keeps its own per-package analysis cache, separate from the
+      # Go build cache that setup-go restores. Persisting it lets unchanged
+      # packages skip re-linting. golangci validates entries against the analyzer
+      # + Go versions internally, so a stale-key restore is always safe.
+      - name: Cache golangci-lint analysis
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/golangci-lint
+          key: golangci-${{ runner.os }}-${{ hashFiles('go.sum', '.golangci.yml') }}
+          restore-keys: |
+            golangci-${{ runner.os }}-
+
       # Uses the repo-pinned golangci-lint v2 (go.mod tool dependency) via
       # `make lint` — do NOT substitute a different linter or version.
       - name: Lint (golangci-lint v2, repo-pinned)
@@ -57,9 +69,11 @@ jobs:
       - name: E2E
         run: make e2e
 
+      # deadcode + govulncheck are pinned via go.mod tool directives (Renovate
+      # bumps them); do NOT re-add @latest — it defeats caching + reproducibility.
       - name: Deadcode (must be empty)
         run: |
-          out="$(go run golang.org/x/tools/cmd/deadcode@latest -test ./...)"
+          out="$(go run golang.org/x/tools/cmd/deadcode -test ./...)"
           if [ -n "${out}" ]; then
             echo "::error::deadcode found unreachable code:"
             echo "${out}"
@@ -68,7 +82,7 @@ jobs:
           echo "no dead code"
 
       - name: govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck ./...
 
   helm:
     name: helm (lint + template + kubeconform)
@@ -89,8 +103,10 @@ jobs:
         with:
           version: v3.16.4
 
+      # Pinned via a go.mod tool directive (Renovate-managed); the module cache
+      # builds it. Do NOT re-add @latest.
       - name: Install kubeconform
-        run: go install github.com/yannh/kubeconform/cmd/kubeconform@latest
+        run: go install github.com/yannh/kubeconform/cmd/kubeconform
 
       - name: Helm lint (strict)
         run: helm lint charts/git-taintedd --strict
@@ -152,9 +168,10 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # actionlint is pinned via a go.mod tool directive (Renovate-managed).
       - name: actionlint
         run: |
-          go install github.com/rhysd/actionlint/cmd/actionlint@latest
+          go install github.com/rhysd/actionlint/cmd/actionlint
           actionlint -color
 
       - name: hadolint
