@@ -1,5 +1,9 @@
 # ---- build stage ----
-FROM golang:1.26.4-alpine AS build
+# --platform=$BUILDPLATFORM keeps this stage on the BUILDER's native arch (e.g.
+# the amd64 CI runner) so the Go toolchain never runs under QEMU; we cross-
+# compile to the target arch via GOOS/GOARCH below. Pure-Go (CGO_ENABLED=0)
+# makes that free. buildx sets BUILDPLATFORM/TARGETOS/TARGETARCH automatically.
+FROM --platform=$BUILDPLATFORM golang:1.26.4-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -8,8 +12,11 @@ COPY . .
 # `git describe` is unavailable in the build context. CI passes the release tag
 # (e.g. v0.1.0) via --build-arg VERSION=...; a plain `docker build` gets "dev".
 ARG VERSION=dev
+# Cross-compile to the requested platform; buildx sets TARGETOS/TARGETARCH per
+# --platform value (both default to the build platform for a plain `docker build`).
+ARG TARGETOS TARGETARCH
 # Pure-Go, static (modernc sqlite needs no CGO). Reproducible (-trimpath).
-RUN CGO_ENABLED=0 GOFLAGS=-trimpath \
+RUN CGO_ENABLED=0 GOFLAGS=-trimpath GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -ldflags "-s -w -X github.com/mivanov93/git-tainted/internal/buildinfo.Version=${VERSION}" \
     -o /out/git-taintedd ./cmd/git-taintedd
 
