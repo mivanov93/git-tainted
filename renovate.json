@@ -5,6 +5,7 @@
   ],
   "pinDigests": true,
   "semanticCommits": "enabled",
+  "postUpdateOptions": ["gomodTidy"],
   "schedule": ["before 6am on monday"],
   "labels": ["dependencies"],
   "vulnerabilityAlerts": {
