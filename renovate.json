@@ -1,10 +1,10 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended",
-    ":pinDigests",
-    ":semanticCommits"
+    "config:recommended"
   ],
+  "pinDigests": true,
+  "semanticCommits": "enabled",
   "schedule": ["before 6am on monday"],
   "labels": ["dependencies"],
   "vulnerabilityAlerts": {
