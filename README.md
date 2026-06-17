@@ -1,5 +1,6 @@
 # git-tainted
 
+[![Release](https://img.shields.io/github/v/release/mivanov93/git-tainted?sort=semver)](https://github.com/mivanov93/git-tainted/releases/latest)
 [![CI](https://github.com/mivanov93/git-tainted/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/mivanov93/git-tainted/actions/workflows/ci.yml)
 [![Renovate](https://github.com/mivanov93/git-tainted/actions/workflows/renovate.yml/badge.svg)](https://github.com/mivanov93/git-tainted/actions/workflows/renovate.yml)
 
