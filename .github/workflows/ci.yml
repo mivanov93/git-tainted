@@ -39,7 +39,7 @@ jobs:
       # bumped dependency recompiles, instead of a cold rebuild of the whole
       # modernc/sqlite + golangci tree.
       - name: Go module + build cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: |
             ~/.cache/go-build
@@ -116,7 +116,7 @@ jobs:
           cache: false
 
       - name: Go module + build cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: |
             ~/.cache/go-build
@@ -197,7 +197,7 @@ jobs:
           cache: false
 
       - name: Go module + build cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: |
             ~/.cache/go-build
