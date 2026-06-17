@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lestrrat-go/jwx/v3/jwa"
-	"github.com/lestrrat-go/jwx/v3/jwk"
-	"github.com/lestrrat-go/jwx/v3/jwt"
+	"github.com/lestrrat-go/jwx/v4/jwa"
+	"github.com/lestrrat-go/jwx/v4/jwk"
+	"github.com/lestrrat-go/jwx/v4/jwt"
 )
 
 const (
@@ -86,9 +86,9 @@ func newECSigner(t *testing.T, kid string) rsaSigner {
 
 func signerFromRaw(t *testing.T, raw any, kid string, alg jwa.SignatureAlgorithm) rsaSigner {
 	t.Helper()
-	priv, err := jwk.Import(raw)
+	priv, err := jwk.Import[jwk.Key](raw)
 	if err != nil {
-		t.Fatalf("jwk.Import(priv): %v", err)
+		t.Fatalf("jwk.Import[jwk.Key](priv): %v", err)
 	}
 	if err := priv.Set(jwk.KeyIDKey, kid); err != nil {
 		t.Fatalf("set kid: %v", err)
@@ -207,7 +207,7 @@ func TestJWKS_Rejections(t *testing.T) {
 	// A second signer whose public key is NOT published → unknown signer.
 	unpublished := newRSASigner(t, "key-unpublished")
 	// HS256 symmetric signer, published with the same kid → must still be rejected.
-	hsKey, err := jwk.Import([]byte("0123456789abcdef0123456789abcdef"))
+	hsKey, err := jwk.Import[jwk.Key]([]byte("0123456789abcdef0123456789abcdef"))
 	if err != nil {
 		t.Fatalf("import hs key: %v", err)
 	}

@@ -8,11 +8,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jwx-go/jwkfetch/v4"
 	"github.com/lestrrat-go/httprc/v3"
-	"github.com/lestrrat-go/jwx/v3/jwa"
-	"github.com/lestrrat-go/jwx/v3/jwk"
-	"github.com/lestrrat-go/jwx/v3/jws"
-	"github.com/lestrrat-go/jwx/v3/jwt"
+	"github.com/lestrrat-go/jwx/v4/jwa"
+	"github.com/lestrrat-go/jwx/v4/jwk"
+	"github.com/lestrrat-go/jwx/v4/jws"
+	"github.com/lestrrat-go/jwx/v4/jwt"
 )
 
 // Default skew leeway applied to exp/nbf/iat to tolerate small clock differences
@@ -58,7 +59,7 @@ type jwksAuth struct {
 
 // cacheKeySet adapts *jwk.Cache (the real background-refreshing cache) to keySet.
 type cacheKeySet struct {
-	cache *jwk.Cache
+	cache *jwkfetch.Cache
 	url   string
 }
 
@@ -79,7 +80,7 @@ func (c *cacheKeySet) ready(ctx context.Context) bool {
 // and audience are required (validated by the caller / FromConfig); algNames is
 // the parsed, validated allowlist.
 func newJWKSAuth(ctx context.Context, url, issuer, audience string, algs []jwa.SignatureAlgorithm) (*jwksAuth, error) {
-	cache, err := jwk.NewCache(ctx, httprc.NewClient())
+	cache, err := jwkfetch.NewCache(ctx, httprc.NewClient())
 	if err != nil {
 		return nil, err
 	}
@@ -90,8 +91,8 @@ func newJWKSAuth(ctx context.Context, url, issuer, audience string, algs []jwa.S
 	// default (WaitReady=true) a down or slow IdP would block the server from
 	// starting — and the unit test would hang fetching an unreachable URL.
 	if err := cache.Register(ctx, url,
-		jwk.WithMinInterval(jwksMinRefreshInterval),
-		jwk.WithWaitReady(false),
+		jwkfetch.WithMinInterval(jwksMinRefreshInterval),
+		jwkfetch.WithWaitReady(false),
 	); err != nil {
 		return nil, err
 	}

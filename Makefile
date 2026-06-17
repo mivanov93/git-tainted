@@ -2,6 +2,9 @@ GO         ?= go
 PKG        := ./...
 DOCKER     := docker
 
+# jwx/v4 imports the experimental stdlib encoding/json/v2 — required to build.
+export GOEXPERIMENT := jsonv2
+
 .PHONY: tidy generate sqlc oapi-server lint vet test race cover test-mysql \
         build build-server build-cli build-ctl docker up-local down e2e smoke verify-spec clean
 

@@ -349,7 +349,9 @@ make test-mysql   # go test -tags=mysql_it ./internal/store/... (requires Docker
 ## Develop
 
 Go 1.26, SQLite (`modernc.org/sqlite`, pure-Go / CGO-free), sqlc, oapi-codegen,
-golangci-lint v2.
+golangci-lint v2. The build requires `GOEXPERIMENT=jsonv2` (jwx v4 uses the
+experimental stdlib `encoding/json/v2`); the `Makefile` exports it, so `make`
+targets just work — for raw `go` commands, `export GOEXPERIMENT=jsonv2` first.
 
 ```sh
 make generate   # sqlc + oapi-codegen

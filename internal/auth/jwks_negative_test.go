@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lestrrat-go/jwx/v3/jwa"
-	"github.com/lestrrat-go/jwx/v3/jwk"
-	"github.com/lestrrat-go/jwx/v3/jwt"
+	"github.com/lestrrat-go/jwx/v4/jwa"
+	"github.com/lestrrat-go/jwx/v4/jwk"
+	"github.com/lestrrat-go/jwx/v4/jwt"
 )
 
 // signHS256 mints a token signed with a symmetric HS256 key carrying the given
@@ -18,7 +18,7 @@ import (
 func signHS256(t *testing.T, kid string) string {
 	t.Helper()
 	secret := []byte("super-secret-hmac-key-0123456789")
-	key, err := jwk.Import(secret)
+	key, err := jwk.Import[jwk.Key](secret)
 	if err != nil {
 		t.Fatalf("import hs key: %v", err)
 	}

@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lestrrat-go/jwx/v3/jwa"
-	"github.com/lestrrat-go/jwx/v3/jwk"
-	"github.com/lestrrat-go/jwx/v3/jwt"
+	"github.com/lestrrat-go/jwx/v4/jwa"
+	"github.com/lestrrat-go/jwx/v4/jwk"
+	"github.com/lestrrat-go/jwx/v4/jwt"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/mivanov93/git-tainted/internal/api"
@@ -323,7 +323,7 @@ func startLocalJWKS(t *testing.T) (localSigner, *httptest.Server) {
 	if err != nil {
 		t.Fatalf("rsa.GenerateKey: %v", err)
 	}
-	priv, err := jwk.Import(raw)
+	priv, err := jwk.Import[jwk.Key](raw)
 	if err != nil {
 		t.Fatalf("jwk.Import: %v", err)
 	}

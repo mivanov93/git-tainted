@@ -18,6 +18,10 @@ concurrency:
 permissions:
   contents: read
 
+# jwx/v4 imports the experimental stdlib encoding/json/v2; required to build.
+env:
+  GOEXPERIMENT: jsonv2
+
 jobs:
   go:
     name: go (build / vet / lint / test / race / e2e / deadcode / vuln)

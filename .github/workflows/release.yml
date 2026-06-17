@@ -115,6 +115,7 @@ jobs:
       - name: Build release binaries
         env:
           VERSION: ${{ github.ref_name }}
+          GOEXPERIMENT: jsonv2
         run: |
           set -euo pipefail
           LDFLAGS="-s -w -X github.com/mivanov93/git-tainted/internal/buildinfo.Version=${VERSION}"

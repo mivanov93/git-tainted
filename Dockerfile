@@ -16,7 +16,8 @@ ARG VERSION=dev
 # --platform value (both default to the build platform for a plain `docker build`).
 ARG TARGETOS TARGETARCH
 # Pure-Go, static (modernc sqlite needs no CGO). Reproducible (-trimpath).
-RUN CGO_ENABLED=0 GOFLAGS=-trimpath GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+# GOEXPERIMENT=jsonv2: jwx/v4 imports the experimental stdlib encoding/json/v2.
+RUN CGO_ENABLED=0 GOFLAGS=-trimpath GOEXPERIMENT=jsonv2 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -ldflags "-s -w -X github.com/mivanov93/git-tainted/internal/buildinfo.Version=${VERSION}" \
     -o /out/git-taintedd ./cmd/git-taintedd
 
