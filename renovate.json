@@ -5,7 +5,7 @@
   ],
   "pinDigests": true,
   "semanticCommits": "enabled",
-  "postUpdateOptions": ["gomodTidy"],
+  "postUpdateOptions": ["gomodTidy", "gomodUpdateImportPaths"],
   "schedule": ["before 6am on monday"],
   "labels": ["dependencies"],
   "vulnerabilityAlerts": {
@@ -14,6 +14,12 @@
   },
   "packageRules": [
     { "matchManagers": ["gomod"], "groupName": "go modules" },
+    {
+      "description": "Go MAJOR bumps move the version into the import path (/vN) and usually break the API, so they can't be applied automatically: gomodUpdateImportPaths rewrites the imports, but API changes still need a manual migration. Hold them on the Dependency Dashboard for opt-in instead of opening PRs that fail CI.",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    },
     { "matchManagers": ["dockerfile", "docker-compose"], "groupName": "docker base images" },
     { "matchManagers": ["github-actions"], "groupName": "github actions" },
     {
