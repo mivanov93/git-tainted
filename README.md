@@ -1,5 +1,8 @@
 # git-tainted
 
+[![CI](https://github.com/mivanov93/git-tainted/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/mivanov93/git-tainted/actions/workflows/ci.yml)
+[![Renovate](https://github.com/mivanov93/git-tainted/actions/workflows/renovate.yml/badge.svg)](https://github.com/mivanov93/git-tainted/actions/workflows/renovate.yml)
+
 Tamper-evidence for git **tags**. A tag is supposed to be an immutable pointer — if
 the commit a tag resolves to ever changes after it was first seen, that's a tamper or
 a footgun (a moved release tag, a force-rewritten `v1.2.3`). `git-tainted` watches
