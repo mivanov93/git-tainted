@@ -17,6 +17,17 @@ type Tx interface {
 	// AppendTaintEvent appends an immutable taint_events row inside the same txn.
 	// Idempotent on the unique key.
 	AppendTaintEvent(ctx context.Context, e *TaintEvent) (int64, error)
+	// CreateRemote inserts a remotes row inside the same txn and returns its id.
+	// Used by the seed bootstrap (internal/seed), which must create remotes and
+	// rebuild their chains atomically in ONE transaction (ErrConflict on dup
+	// normalized_url). The normal API path uses Store.CreateRemote instead.
+	CreateRemote(ctx context.Context, r *Remote) (RemoteID, error)
+	// CountAllRemotes counts ALL remotes rows (incl. soft-deleted) on the txn's
+	// own connection. The seed bootstrap re-checks the zero-rows guard INSIDE its
+	// write transaction (the TOCTOU backstop); using the Store-level CountAllRemotes
+	// there would deadlock a single-connection SQLite pool, so the count must run on
+	// this transaction.
+	CountAllRemotes(ctx context.Context) (int64, error)
 }
 
 // RemoteStore: remote CRUD + scheduler selection + health/state.
@@ -25,6 +36,9 @@ type RemoteStore interface {
 	GetRemote(ctx context.Context, id RemoteID) (*Remote, error)
 	GetRemoteByURL(ctx context.Context, normalizedURL string) (*Remote, error)
 	ListRemotes(ctx context.Context, limit int, cursor int64) ([]Remote, int64, error)
+	// CountAllRemotes counts ALL remotes rows INCLUDING soft-deleted ones. Used by
+	// the seed bootstrap's first-time guard (a fleet later emptied never re-seeds).
+	CountAllRemotes(ctx context.Context) (int64, error)
 	UpdateRemote(ctx context.Context, r *Remote) error
 	SoftDeleteRemote(ctx context.Context, id RemoteID, atNS int64) error
 	SelectDueRemotes(ctx context.Context, nowNS int64, limit int) ([]Remote, error)

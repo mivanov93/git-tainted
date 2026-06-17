@@ -53,6 +53,19 @@ func (q *Queries) AdvanceRemoteChainHead(ctx context.Context, arg AdvanceRemoteC
 	return result.RowsAffected()
 }
 
+const countAllRemotes = `-- name: CountAllRemotes :one
+SELECT COUNT(*) FROM remotes
+`
+
+// Counts ALL remotes rows including soft-deleted (removed_at_ns set). The seed
+// first-time guard adopts only when this is zero (spec sec.5 / sec.4.5 step 0).
+func (q *Queries) CountAllRemotes(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countAllRemotes)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createRemote = `-- name: CreateRemote :one
 INSERT INTO remotes (
   url, normalized_url, transport,

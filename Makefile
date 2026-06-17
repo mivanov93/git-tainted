@@ -35,7 +35,7 @@ docker:          ; $(DOCKER) build -t git-tainted:dev .
 up-local:        ; $(DOCKER) compose -f docker-compose.local.yml up --build -d
 down:            ; $(DOCKER) compose -f docker-compose.local.yml down -v
 
-e2e:             ; $(GO) test -tags=e2e -count=1 ./internal/sync/... ./internal/api/...
+e2e:             ; $(GO) test -tags=e2e -count=1 ./internal/sync/... ./internal/api/... ./internal/seed/...
 # test-mysql runs the MySQL Store integration suite (build tag mysql_it) against a
 # throwaway mysql:8.4 container started by testcontainers-go. Requires a running
 # Docker daemon. On-demand only — NOT part of the default Docker-free gate.

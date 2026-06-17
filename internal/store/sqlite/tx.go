@@ -164,6 +164,48 @@ func (t *sqliteTx) AdvanceChainHead(ctx context.Context, remoteID model.RemoteID
 	})
 }
 
+// CreateRemote inserts a remotes row inside the txn and returns its id. Mirrors
+// sqliteStore.CreateRemote exactly, but bound to the transaction's *sqlc.Queries
+// so the seed bootstrap creates remotes and rebuilds their chains atomically in
+// one WithTx (spec §4.5 step 1).
+func (t *sqliteTx) CreateRemote(ctx context.Context, r *model.Remote) (model.RemoteID, error) {
+	row, err := t.q.CreateRemote(ctx, sqlc.CreateRemoteParams{
+		Url:                 r.URL,
+		NormalizedUrl:       r.NormalizedURL,
+		Transport:           string(r.Transport),
+		SyncIntervalNs:      int64(r.SyncInterval),
+		StalenessBudgetNs:   int64(r.StalenessBudget),
+		TaintAnyTagDeletion: boolToInt(r.TaintAnyTagDeletion),
+		HashAlgo:            nullStringInterface(hashAlgoPtr(r.HashAlgo)),
+		Status:              string(r.Status),
+		LastOkNs:            r.LastOkNS,
+		LastErr:             r.LastErr,
+		ConsecutiveFailures: int64(r.ConsecutiveFailures),
+		ChainHeadHash:       r.ChainHeadHash,
+		ChainLen:            r.ChainLen,
+		RemovedAtNs:         nullInt64Interface(r.RemovedAtNS),
+		CreatedAtNs:         r.CreatedAtNS,
+		UpdatedAtNs:         r.UpdatedAtNS,
+	})
+	if err != nil {
+		if isUniqueConflict(err) {
+			return 0, fmt.Errorf("CreateRemote normalized_url=%q: %w", r.NormalizedURL, model.ErrConflict)
+		}
+		return 0, fmt.Errorf("CreateRemote: %w", err)
+	}
+	return model.RemoteID(row.ID), nil
+}
+
+// CountAllRemotes counts all remotes rows (incl. soft-deleted) on the txn's
+// connection — the seed in-txn zero-rows guard (spec §4.5 step 0 / M2).
+func (t *sqliteTx) CountAllRemotes(ctx context.Context) (int64, error) {
+	n, err := t.q.CountAllRemotes(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("CountAllRemotes: %w", err)
+	}
+	return n, nil
+}
+
 // AppendTaintEvent inserts an immutable taint_events row inside the txn.
 func (t *sqliteTx) AppendTaintEvent(ctx context.Context, e *model.TaintEvent) (int64, error) {
 	var observationID interface{}

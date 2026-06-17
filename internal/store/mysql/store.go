@@ -187,6 +187,14 @@ func (s *mysqlStore) ListRemotes(ctx context.Context, limit int, cursor int64) (
 	return out, nextCursor, nil
 }
 
+func (s *mysqlStore) CountAllRemotes(ctx context.Context) (int64, error) {
+	n, err := s.q.CountAllRemotes(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("CountAllRemotes: %w", err)
+	}
+	return n, nil
+}
+
 func (s *mysqlStore) UpdateRemote(ctx context.Context, r *model.Remote) error {
 	n, err := s.q.UpdateRemote(ctx, mysqlc.UpdateRemoteParams{
 		Url:                 r.URL,

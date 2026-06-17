@@ -165,6 +165,48 @@ func (t *mysqlTx) AdvanceChainHead(ctx context.Context, remoteID model.RemoteID,
 	})
 }
 
+// CreateRemote inserts a remotes row inside the txn and returns its id (via
+// LastInsertId). Mirrors mysqlStore.CreateRemote, but bound to the transaction's
+// *mysqlc.Queries so the seed bootstrap creates remotes and rebuilds their chains
+// atomically in one WithTx (spec §4.5 step 1).
+func (t *mysqlTx) CreateRemote(ctx context.Context, r *model.Remote) (model.RemoteID, error) {
+	id, err := t.q.CreateRemote(ctx, mysqlc.CreateRemoteParams{
+		Url:                 r.URL,
+		NormalizedUrl:       r.NormalizedURL,
+		Transport:           string(r.Transport),
+		SyncIntervalNs:      int64(r.SyncInterval),
+		StalenessBudgetNs:   int64(r.StalenessBudget),
+		TaintAnyTagDeletion: boolToInt32(r.TaintAnyTagDeletion),
+		HashAlgo:            nullStringFromStrPtr(hashAlgoPtr(r.HashAlgo)),
+		Status:              string(r.Status),
+		LastOkNs:            r.LastOkNS,
+		LastErr:             r.LastErr,
+		ConsecutiveFailures: int32(r.ConsecutiveFailures), //nolint:gosec // count, fits int32
+		ChainHeadHash:       r.ChainHeadHash,
+		ChainLen:            r.ChainLen,
+		RemovedAtNs:         nullInt64FromPtr(r.RemovedAtNS),
+		CreatedAtNs:         r.CreatedAtNS,
+		UpdatedAtNs:         r.UpdatedAtNS,
+	})
+	if err != nil {
+		if isMySQLUniqueConflict(err) {
+			return 0, fmt.Errorf("CreateRemote normalized_url=%q: %w", r.NormalizedURL, model.ErrConflict)
+		}
+		return 0, fmt.Errorf("CreateRemote: %w", err)
+	}
+	return model.RemoteID(id), nil
+}
+
+// CountAllRemotes counts all remotes rows (incl. soft-deleted) on the txn's
+// connection — the seed in-txn zero-rows guard (spec §4.5 step 0 / M2).
+func (t *mysqlTx) CountAllRemotes(ctx context.Context) (int64, error) {
+	n, err := t.q.CountAllRemotes(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("CountAllRemotes: %w", err)
+	}
+	return n, nil
+}
+
 // AppendTaintEvent inserts an immutable taint_events row inside the txn,
 // idempotent on the unique key.
 func (t *mysqlTx) AppendTaintEvent(ctx context.Context, e *model.TaintEvent) (int64, error) {

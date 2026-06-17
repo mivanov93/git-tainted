@@ -264,12 +264,19 @@ func (t *fakeTx) AppendTaintEvent(_ context.Context, e *model.TaintEvent) (int64
 	t.markRef(e.RefID)
 	return 0, nil
 }
+func (t *fakeTx) CreateRemote(ctx context.Context, r *model.Remote) (model.RemoteID, error) {
+	return t.f.CreateRemote(ctx, r)
+}
+func (t *fakeTx) CountAllRemotes(ctx context.Context) (int64, error) {
+	return t.f.CountAllRemotes(ctx)
+}
 
 // ---- unhit pass-through methods (satisfy model.Store) ----
 
 func (f *fakeStore) ListRemotes(context.Context, int, int64) ([]model.Remote, int64, error) {
 	return nil, 0, nil
 }
+func (f *fakeStore) CountAllRemotes(context.Context) (int64, error) { return 0, nil }
 func (f *fakeStore) SelectDueRemotes(context.Context, int64, int) ([]model.Remote, error) {
 	return nil, nil
 }

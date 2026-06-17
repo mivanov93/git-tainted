@@ -12,6 +12,9 @@ type Querier interface {
 	AckTaintEvent(ctx context.Context, arg AckTaintEventParams) error
 	AdvanceChainHead(ctx context.Context, arg AdvanceChainHeadParams) error
 	AdvanceRemoteChainHead(ctx context.Context, arg AdvanceRemoteChainHeadParams) (int64, error)
+	// Counts ALL remotes rows including soft-deleted (removed_at_ns set). The seed
+	// first-time guard adopts only when this is zero (spec sec.5 / sec.4.5 step 0).
+	CountAllRemotes(ctx context.Context) (int64, error)
 	CountRefs(ctx context.Context, remoteID int64) (int64, error)
 	// MySQL flavor of the remotes query set. No RETURNING (MySQL lacks it):
 	// CreateRemote uses :execlastid; the store re-fetches via GetRemote.

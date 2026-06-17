@@ -617,6 +617,71 @@ func TestMySQLStore_Contract(t *testing.T) {
 			t.Errorf("pagination cursor did not advance: %d <= %d", page2[0].ID, page1[len(page1)-1].ID)
 		}
 	})
+
+	// Seed-bootstrap seam (spec §4.5 / §8): Tx.CreateRemote + Tx.CountAllRemotes +
+	// Store.CountAllRemotes against real MySQL, plus a genesis observation written
+	// in the same txn through the new CreateRemote seam (the chain must stay intact).
+	t.Run("SeedSeam_TxCreateRemote_CountAllRemotes", func(t *testing.T) {
+		before, err := s.CountAllRemotes(ctx)
+		if err != nil {
+			t.Fatalf("Store.CountAllRemotes: %v", err)
+		}
+		const url = "https://github.com/org/seed-seam.git"
+		oid := model.MustParseOID("1111111111111111111111111111111111111111", model.SHA1)
+		var newID model.RemoteID
+		err = s.WithTx(ctx, func(ctx context.Context, tx model.Tx) error {
+			// In-txn count must run on the txn connection (the seed M2 guard path).
+			n, cerr := tx.CountAllRemotes(ctx)
+			if cerr != nil {
+				return cerr
+			}
+			if n != before {
+				t.Errorf("Tx.CountAllRemotes = %d, want %d (== Store count before insert)", n, before)
+			}
+			id, cerr := tx.CreateRemote(ctx, &model.Remote{
+				URL: url, NormalizedURL: url, Transport: model.TransportHTTPS,
+				TaintAnyTagDeletion: true, SyncInterval: 5 * time.Minute, StalenessBudget: time.Hour,
+				Status: model.RemoteActive, ChainHeadHash: make([]byte, 32),
+				CreatedAtNS: 1_718_000_000_000_000_000, UpdatedAtNS: 1_718_000_000_000_000_000,
+			})
+			if cerr != nil {
+				return cerr
+			}
+			newID = id
+			// Write a sync + a genesis observation (the seed write path shape).
+			if _, cerr := tx.WriteSync(ctx, &model.Sync{
+				RemoteID: id, Trigger: model.TriggerRegister, StartedNS: 1, FinishedNS: 2,
+				Status: model.SyncOk, ChainHeadBefore: make([]byte, 32),
+			}); cerr != nil {
+				return cerr
+			}
+			ref := &model.Ref{
+				RemoteID: id, TagName: "v1", CurrentOID: oid, FirstOID: oid,
+				FirstSeenNS: 1, LastSeenNS: 1, LastChangedNS: 1, ObservationCount: 0,
+			}
+			if cerr := tx.UpsertRefProjection(ctx, ref); cerr != nil {
+				return cerr
+			}
+			if _, cerr := tx.AppendObservation(ctx, &model.Observation{
+				RemoteID: id, RefID: ref.ID, EventType: model.EventTagCreated, NewOID: oid, ObservedAtNS: 1,
+			}); cerr != nil {
+				return cerr
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("seed-seam WithTx: %v", err)
+		}
+		after, err := s.CountAllRemotes(ctx)
+		if err != nil {
+			t.Fatalf("Store.CountAllRemotes after: %v", err)
+		}
+		if after != before+1 {
+			t.Errorf("CountAllRemotes after = %d, want %d", after, before+1)
+		}
+		// The rebuilt chain must verify.
+		assertMySQLChainIntact(t, ctx, s, newID)
+	})
 }
 
 // mysqlServerVersion reads SELECT VERSION() via a throwaway exec in the container,
