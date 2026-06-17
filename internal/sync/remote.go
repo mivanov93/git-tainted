@@ -86,6 +86,7 @@ func (rs *RemoteSyncer) SyncRemote(ctx context.Context, remoteID model.RemoteID)
 	result.HeadBefore = headBefore
 	result.TagsSeen = len(lsRefs)
 
+	const syncRetentionKeep = 5 // keep newest N sync-audit rows/remote (FK-pinned change-syncs also kept)
 	txErr := rs.store.WithTx(ctx, func(ctx context.Context, tx model.Tx) error {
 		nowNS := rs.clk.NowNS()
 		syncID, err := tx.WriteSync(ctx, &model.Sync{
@@ -101,6 +102,11 @@ func (rs *RemoteSyncer) SyncRemote(ctx context.Context, remoteID model.RemoteID)
 			return fmt.Errorf("write sync: %w", err)
 		}
 		result.SyncID = syncID
+
+		// Retention: keep the audit table bounded (newest few + FK-pinned change-syncs).
+		if err := tx.PruneSyncs(ctx, remoteID, syncRetentionKeep); err != nil {
+			return fmt.Errorf("prune syncs: %w", err)
+		}
 
 		for i := range lsRefs {
 			now := &lsRefs[i]

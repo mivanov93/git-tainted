@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"strings"
 	"time"
 
@@ -418,6 +419,9 @@ func (s *sqliteStore) ListSyncs(ctx context.Context, remoteID model.RemoteID, li
 	if limit <= 0 {
 		limit = 100
 	}
+	if cursor <= 0 {
+		cursor = math.MaxInt64 // 0 = first page (from newest); cursor is an exclusive upper bound on id
+	}
 	rows, err := s.q.ListSyncs(ctx, sqlc.ListSyncsParams{
 		RemoteID: int64(remoteID),
 		ID:       cursor,
@@ -427,13 +431,14 @@ func (s *sqliteStore) ListSyncs(ctx context.Context, remoteID model.RemoteID, li
 		return nil, 0, fmt.Errorf("ListSyncs: %w", err)
 	}
 	out := make([]model.Sync, 0, len(rows))
-	var nextCursor int64
 	for _, r := range rows {
-		sy := syncFromRow(r)
-		out = append(out, sy)
-		if r.ID > nextCursor {
-			nextCursor = r.ID
-		}
+		out = append(out, syncFromRow(r))
+	}
+	// Newest-first: the last row carries the smallest id. Only a full page can have
+	// an older page after it; signal "no more" with 0 otherwise.
+	var nextCursor int64
+	if len(rows) == limit && len(out) > 0 {
+		nextCursor = int64(out[len(out)-1].ID)
 	}
 	return out, nextCursor, nil
 }

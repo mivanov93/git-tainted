@@ -293,6 +293,11 @@ paths:
       responses:
         "202":
           description: sync queued
+        "429":
+          description: forced sync rate-limited (cooldown not elapsed)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         "404":
           description: not found
           content:

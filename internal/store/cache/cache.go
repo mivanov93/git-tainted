@@ -453,6 +453,12 @@ func (t *captureTx) WriteSync(ctx context.Context, s *model.Sync) (model.SyncID,
 	return t.inner.WriteSync(ctx, s) //nolint:wrapcheck // transparent delegation
 }
 
+func (t *captureTx) PruneSyncs(ctx context.Context, remoteID model.RemoteID, keep int) error {
+	// Retention prune touches only audit rows, not the cached read-model; the remote
+	// is already marked by WriteSync in the same tx.
+	return t.inner.PruneSyncs(ctx, remoteID, keep) //nolint:wrapcheck // transparent delegation
+}
+
 func (t *captureTx) AdvanceChainHead(ctx context.Context, remoteID model.RemoteID, newHead []byte, newLen int64) error {
 	t.mark(remoteID)
 	return t.inner.AdvanceChainHead(ctx, remoteID, newHead, newLen) //nolint:wrapcheck // transparent delegation

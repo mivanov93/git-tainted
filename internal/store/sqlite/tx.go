@@ -155,6 +155,16 @@ func (t *sqliteTx) WriteSync(ctx context.Context, s *model.Sync) (model.SyncID, 
 	return t.syncID, nil
 }
 
+// PruneSyncs enforces sync-audit retention (see model.Tx).
+func (t *sqliteTx) PruneSyncs(ctx context.Context, remoteID model.RemoteID, keep int) error {
+	return t.q.PruneSyncs(ctx, sqlc.PruneSyncsParams{
+		RemoteID:   int64(remoteID),
+		RemoteID_2: int64(remoteID),
+		Limit:      int64(keep),
+		RemoteID_3: int64(remoteID),
+	})
+}
+
 // AdvanceChainHead performs a non-CAS chain head advance (used by Lock.Release).
 func (t *sqliteTx) AdvanceChainHead(ctx context.Context, remoteID model.RemoteID, newHead []byte, newLen int64) error {
 	return t.q.AdvanceChainHead(ctx, sqlc.AdvanceChainHeadParams{

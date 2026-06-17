@@ -28,6 +28,9 @@ type Tx interface {
 	// there would deadlock a single-connection SQLite pool, so the count must run on
 	// this transaction.
 	CountAllRemotes(ctx context.Context) (int64, error)
+	// PruneSyncs enforces sync-audit retention: keep the newest N syncs for the
+	// remote plus any sync still referenced by a ledger observation (FK-safe).
+	PruneSyncs(ctx context.Context, remoteID RemoteID, keep int) error
 }
 
 // RemoteStore: remote CRUD + scheduler selection + health/state.

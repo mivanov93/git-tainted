@@ -106,6 +106,9 @@ func (s *StrictServerImpl) CreateRemote(ctx context.Context, req oapi.CreateRemo
 	if body.SyncIntervalNs != nil && *body.SyncIntervalNs > 0 {
 		syncInterval = time.Duration(*body.SyncIntervalNs)
 	}
+	if syncInterval < minSyncInterval {
+		syncInterval = minSyncInterval // enforce the poll-interval floor
+	}
 	stalenessBudget := time.Hour
 	if body.StalenessBudgetNs != nil && *body.StalenessBudgetNs > 0 {
 		stalenessBudget = time.Duration(*body.StalenessBudgetNs)
@@ -170,6 +173,9 @@ func (s *StrictServerImpl) UpdateRemote(ctx context.Context, req oapi.UpdateRemo
 	}
 	if body.SyncIntervalNs != nil && *body.SyncIntervalNs > 0 {
 		r.SyncInterval = time.Duration(*body.SyncIntervalNs)
+		if r.SyncInterval < minSyncInterval {
+			r.SyncInterval = minSyncInterval // enforce the poll-interval floor
+		}
 	}
 	if body.StalenessBudgetNs != nil && *body.StalenessBudgetNs > 0 {
 		r.StalenessBudget = time.Duration(*body.StalenessBudgetNs)
@@ -211,6 +217,19 @@ func (s *StrictServerImpl) DeleteRemote(ctx context.Context, req oapi.DeleteRemo
 
 // ---- Sync ------------------------------------------------------------------
 
+// allowForcedSync enforces the per-remote forced-sync cooldown. It records nowNS
+// as the remote's last forced sync and returns false if the previous one was
+// within minForcedSyncInterval.
+func (s *StrictServerImpl) allowForcedSync(remoteID model.RemoteID, nowNS int64) bool {
+	s.forcedMu.Lock()
+	defer s.forcedMu.Unlock()
+	if last, ok := s.lastForcedNS[remoteID]; ok && nowNS-last < int64(minForcedSyncInterval) {
+		return false
+	}
+	s.lastForcedNS[remoteID] = nowNS
+	return true
+}
+
 // TriggerSync implements POST /v1/remotes/{remoteId}/sync.
 // Confirms the remote exists then fires a background SyncRemote (fire-and-forget).
 // The per-remote Lock inside RemoteSyncer prevents overlap with the scheduler.
@@ -221,6 +240,9 @@ func (s *StrictServerImpl) TriggerSync(ctx context.Context, req oapi.TriggerSync
 			return oapi.TriggerSync404JSONResponse(oapi.Error{Error: "remote not found"}), nil
 		}
 		return nil, err
+	}
+	if s.syncer != nil && !s.allowForcedSync(remoteID, s.clock.NowNS()) {
+		return oapi.TriggerSync429JSONResponse(oapi.Error{Error: "forced sync rate-limited; cooldown not elapsed"}), nil
 	}
 	s.log.Info("audit: sync triggered",
 		"op", "triggerSync", "principal", principalOf(ctx), "remote_id", req.RemoteId)
@@ -264,10 +286,11 @@ func (s *StrictServerImpl) ListSyncs(ctx context.Context, req oapi.ListSyncsRequ
 	for _, sy := range syncs {
 		items = append(items, syncToOAPI(sy))
 	}
-	return oapi.ListSyncs200JSONResponse(oapi.SyncAuditList{
-		Items:      items,
-		NextCursor: &nextCursor,
-	}), nil
+	resp := oapi.SyncAuditList{Items: items}
+	if nextCursor > 0 { // omit on the last page (no phantom next cursor)
+		resp.NextCursor = &nextCursor
+	}
+	return oapi.ListSyncs200JSONResponse(resp), nil
 }
 
 // ---- Tags ------------------------------------------------------------------
@@ -442,6 +465,13 @@ func (s *StrictServerImpl) AckTaintEvent(ctx context.Context, req oapi.AckTaintE
 }
 
 // ---- Verify ----------------------------------------------------------------
+
+// Operational floors: minSyncInterval is the poll-interval floor (clamped up on
+// create/update); minForcedSyncInterval is the per-remote manual-sync cooldown.
+const (
+	minSyncInterval       = time.Minute
+	minForcedSyncInterval = 30 * time.Second
+)
 
 // Inline request limits mirroring the OpenAPI request-schema constraints
 // (oapi-codegen does not enforce maxLength/pattern, so the handlers do).
