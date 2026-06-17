@@ -3,7 +3,7 @@
 # the amd64 CI runner) so the Go toolchain never runs under QEMU; we cross-
 # compile to the target arch via GOOS/GOARCH below. Pure-Go (CGO_ENABLED=0)
 # makes that free. buildx sets BUILDPLATFORM/TARGETOS/TARGETARCH automatically.
-FROM --platform=$BUILDPLATFORM golang:1.26.4-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.26.4-alpine@sha256:f1ddd9fe14fffc091dd98cb4bfa999f32c5fc77d2f2305ea9f0e2595c5437c14 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -21,7 +21,7 @@ RUN CGO_ENABLED=0 GOFLAGS=-trimpath GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     -o /out/git-taintedd ./cmd/git-taintedd
 
 # ---- runtime stage ----
-FROM alpine:3.22
+FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 # git is the only runtime dependency (subprocess); ca-certs for https remotes;
 # openssh-client for ssh remotes. The Go binary itself is fully static.
 # DL3018: alpine floating versions are intentional — we always want the latest
