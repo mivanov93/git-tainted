@@ -1,0 +1,54 @@
+# Self-hosted Renovate — runs Renovate against THIS repo on a schedule using a
+# repo-scoped token, so no third-party (Mend) app needs access to the repo.
+# Renovate reads renovate.json from the repo itself. Because PRs are opened with
+# a user/App token (not the workflow's GITHUB_TOKEN), your normal CI runs on them.
+#
+# ONE-TIME SETUP (cannot live in this file — secrets/tokens are created by you):
+#   1. Create a fine-grained PAT (or GitHub App token) scoped to THIS repo with:
+#      Contents: RW, Pull requests: RW, Issues: RW, Workflows: RW, Metadata: R.
+#   2. Add it as the repository secret RENOVATE_TOKEN
+#      (Settings -> Secrets and variables -> Actions -> New repository secret).
+name: renovate
+
+on:
+  schedule:
+    # Daily 04:00 UTC. renovate.json gates *routine* PRs to "before 6am on
+    # monday"; security updates (vulnerabilityAlerts) run "at any time" — i.e.
+    # on every run — which is why this is daily, not weekly. Raise the frequency
+    # if you want faster security PRs.
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+    inputs:
+      dryRun:
+        description: Dry run — log what would happen, open no PRs
+        type: boolean
+        default: false
+      logLevel:
+        description: Log level
+        type: choice
+        default: info
+        options: [debug, info, warn]
+
+# One Renovate run at a time; never cancel an in-flight run mid-PR.
+concurrency:
+  group: renovate
+  cancel-in-progress: false
+
+# Renovate authenticates with RENOVATE_TOKEN; the workflow's own GITHUB_TOKEN
+# needs no write access.
+permissions:
+  contents: read
+
+jobs:
+  renovate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Renovate
+        uses: renovatebot/github-action@v46.1.15
+        with:
+          token: ${{ secrets.RENOVATE_TOKEN }}
+        env:
+          # Operate on this repo only — no autodiscovery across the token's reach.
+          RENOVATE_REPOSITORIES: ${{ github.repository }}
+          RENOVATE_DRY_RUN: ${{ inputs.dryRun && 'full' || '' }}
+          LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
