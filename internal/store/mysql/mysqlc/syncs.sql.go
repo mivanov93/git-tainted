@@ -53,7 +53,7 @@ func (q *Queries) InsertSync(ctx context.Context, arg InsertSyncParams) (int64, 
 
 const listSyncs = `-- name: ListSyncs :many
 SELECT id, remote_id, ` + "`" + `trigger` + "`" + `, started_ns, finished_ns, status, tags_seen, tags_changed, error, chain_head_before, chain_head_after FROM syncs
-WHERE remote_id = ? AND id > ?
+WHERE remote_id = ? AND id < ?
 ORDER BY id DESC
 LIMIT ?
 `
@@ -97,4 +97,27 @@ func (q *Queries) ListSyncs(ctx context.Context, arg ListSyncsParams) ([]Sync, e
 		return nil, err
 	}
 	return items, nil
+}
+
+const pruneSyncs = `-- name: PruneSyncs :exec
+DELETE FROM syncs WHERE syncs.remote_id = ?
+  AND syncs.id NOT IN (SELECT id FROM (SELECT id FROM syncs s WHERE s.remote_id = ? ORDER BY id DESC LIMIT ?) AS keep_ids)
+  AND syncs.id NOT IN (SELECT sync_id FROM observations o WHERE o.remote_id = ?)
+`
+
+type PruneSyncsParams struct {
+	RemoteID   int64
+	RemoteID_2 int64
+	Limit      int32
+	RemoteID_3 int64
+}
+
+func (q *Queries) PruneSyncs(ctx context.Context, arg PruneSyncsParams) error {
+	_, err := q.db.ExecContext(ctx, pruneSyncs,
+		arg.RemoteID,
+		arg.RemoteID_2,
+		arg.Limit,
+		arg.RemoteID_3,
+	)
+	return err
 }

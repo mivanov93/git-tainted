@@ -257,6 +257,7 @@ func (t *fakeTx) UpsertRefProjection(_ context.Context, ref *model.Ref) error {
 	return nil
 }
 func (t *fakeTx) WriteSync(_ context.Context, _ *model.Sync) (model.SyncID, error) { return 0, nil }
+func (t *fakeTx) PruneSyncs(_ context.Context, _ model.RemoteID, _ int) error      { return nil }
 func (t *fakeTx) AdvanceChainHead(_ context.Context, _ model.RemoteID, _ []byte, _ int64) error {
 	return nil
 }

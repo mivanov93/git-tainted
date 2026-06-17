@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"strings"
 	"time"
 
@@ -423,6 +424,9 @@ func (s *mysqlStore) ListSyncs(ctx context.Context, remoteID model.RemoteID, lim
 	if limit <= 0 {
 		limit = 100
 	}
+	if cursor <= 0 {
+		cursor = math.MaxInt64 // 0 = first page (from newest); cursor is an exclusive upper bound on id
+	}
 	rows, err := s.q.ListSyncs(ctx, mysqlc.ListSyncsParams{
 		RemoteID: int64(remoteID),
 		ID:       cursor,
@@ -432,12 +436,14 @@ func (s *mysqlStore) ListSyncs(ctx context.Context, remoteID model.RemoteID, lim
 		return nil, 0, fmt.Errorf("ListSyncs: %w", err)
 	}
 	out := make([]model.Sync, 0, len(rows))
-	var nextCursor int64
 	for _, r := range rows {
 		out = append(out, syncFromMySQLRow(r))
-		if r.ID > nextCursor {
-			nextCursor = r.ID
-		}
+	}
+	// Newest-first: the last row carries the smallest id. Only a full page can have
+	// an older page after it; signal "no more" with 0 otherwise.
+	var nextCursor int64
+	if len(rows) == limit && len(out) > 0 {
+		nextCursor = int64(out[len(out)-1].ID)
 	}
 	return out, nextCursor, nil
 }

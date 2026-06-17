@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/mivanov93/git-tainted/internal/api/oapi"
 	"github.com/mivanov93/git-tainted/internal/auth"
@@ -25,6 +26,11 @@ type StrictServerImpl struct {
 	clock  model.Clock
 	syncer *tlsync.RemoteSyncer // may be nil (ops-only mode / tests that don't need sync)
 	log    *slog.Logger
+
+	// forced-sync cooldown state (in-memory; resets on restart): last manual /sync
+	// time per remote, guarded by forcedMu.
+	forcedMu     sync.Mutex
+	lastForcedNS map[model.RemoteID]int64
 }
 
 // discardLogger is a no-op logger used when a caller passes nil.
@@ -46,7 +52,7 @@ func NewServer(s model.Store, c model.Clock, syncer *tlsync.RemoteSyncer, authn 
 	if log == nil {
 		log = discardLogger
 	}
-	impl := &StrictServerImpl{store: s, clock: c, syncer: syncer, log: log}
+	impl := &StrictServerImpl{store: s, clock: c, syncer: syncer, log: log, lastForcedNS: make(map[model.RemoteID]int64)}
 	si := oapi.NewStrictHandlerWithOptions(impl, nil, oapi.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: requestErrorHandler,
 		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {

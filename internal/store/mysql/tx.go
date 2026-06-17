@@ -156,6 +156,16 @@ func (t *mysqlTx) WriteSync(ctx context.Context, s *model.Sync) (model.SyncID, e
 	return t.syncID, nil
 }
 
+// PruneSyncs enforces sync-audit retention (see model.Tx).
+func (t *mysqlTx) PruneSyncs(ctx context.Context, remoteID model.RemoteID, keep int) error {
+	return t.q.PruneSyncs(ctx, mysqlc.PruneSyncsParams{
+		RemoteID:   int64(remoteID),
+		RemoteID_2: int64(remoteID),
+		Limit:      int32(keep), //nolint:gosec // retention count, fits int32
+		RemoteID_3: int64(remoteID),
+	})
+}
+
 // AdvanceChainHead performs a non-CAS chain head advance (used by Lock.Release).
 func (t *mysqlTx) AdvanceChainHead(ctx context.Context, remoteID model.RemoteID, newHead []byte, newLen int64) error {
 	return t.q.AdvanceChainHead(ctx, mysqlc.AdvanceChainHeadParams{

@@ -36,6 +36,7 @@ type Querier interface {
 	ListSyncs(ctx context.Context, arg ListSyncsParams) ([]Sync, error)
 	ListTags(ctx context.Context, remoteID int64) ([]Ref, error)
 	ListTaintEvents(ctx context.Context, arg ListTaintEventsParams) ([]TaintEvent, error)
+	PruneSyncs(ctx context.Context, arg PruneSyncsParams) error
 	ReplayObservations(ctx context.Context, arg ReplayObservationsParams) ([]Observation, error)
 	// Returns active, non-removed remotes whose next sync time has passed.
 	// last_ok_ns + sync_interval_ns < nowNS
