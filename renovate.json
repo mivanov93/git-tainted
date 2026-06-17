@@ -1,0 +1,24 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":pinDigests",
+    ":semanticCommits"
+  ],
+  "schedule": ["before 6am on monday"],
+  "labels": ["dependencies"],
+  "vulnerabilityAlerts": {
+    "labels": ["security"],
+    "schedule": ["at any time"]
+  },
+  "packageRules": [
+    { "matchManagers": ["gomod"], "groupName": "go modules" },
+    { "matchManagers": ["dockerfile", "docker-compose"], "groupName": "docker base images" },
+    { "matchManagers": ["github-actions"], "groupName": "github actions" },
+    {
+      "description": "Our own server image is published by this repo's release pipeline; Renovate must not bump or pin the chart/compose reference to it.",
+      "matchPackageNames": ["docker.io/mivanov93/git-taintedd", "mivanov93/git-taintedd"],
+      "enabled": false
+    }
+  ]
+}
