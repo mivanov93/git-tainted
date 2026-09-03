@@ -3,7 +3,7 @@
 # the amd64 CI runner) so the Go toolchain never runs under QEMU; we cross-
 # compile to the target arch via GOOS/GOARCH below. Pure-Go (CGO_ENABLED=0)
 # makes that free. buildx sets BUILDPLATFORM/TARGETOS/TARGETARCH automatically.
-FROM --platform=$BUILDPLATFORM golang:1.26.4-alpine@sha256:f1ddd9fe14fffc091dd98cb4bfa999f32c5fc77d2f2305ea9f0e2595c5437c14 AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.1-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
